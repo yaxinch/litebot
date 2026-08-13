@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -28,6 +28,31 @@ class ChannelsConfig(Base):
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
 
 
+class ContextManagementConfig(Base):
+    """Context compaction and tool-result offload policy."""
+
+    recent_turns: int = Field(default=8, ge=1)
+    soft_threshold: float = Field(default=0.80, gt=0, le=1)
+    hard_threshold: float = Field(default=0.92, gt=0, le=1)
+    compaction_target: float = Field(default=0.68, gt=0, le=1)
+    safety_margin_tokens: int = Field(default=1024, ge=1)
+    output_reserve_tokens: int | None = Field(default=None, ge=1)
+    tool_offload_threshold_bytes: int = Field(default=8192, ge=1)
+    tool_summary_max_chars: int = Field(default=1000, ge=1)
+    artifact_page_size: int = Field(default=4096, ge=1)
+    artifact_ttl_days: int = Field(default=30, ge=1)
+    artifact_gc_interval_seconds: int = Field(default=86400, ge=1)
+    max_compaction_rounds: int = Field(default=5, ge=1)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> "ContextManagementConfig":
+        if not self.compaction_target < self.soft_threshold < self.hard_threshold:
+            raise ValueError(
+                "context thresholds must satisfy compaction_target < soft_threshold < hard_threshold"
+            )
+        return self
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -42,6 +67,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
+    context_management: ContextManagementConfig = Field(default_factory=ContextManagementConfig)
 
 
 class AgentsConfig(Base):

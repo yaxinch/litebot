@@ -1682,6 +1682,11 @@ nanobot/
 └── cli/            # 🖥️ Commands
 ```
 
+## Known limitations
+
+- Offloaded tool artifacts are paged by decoded text character offset, not raw byte offset. This suits the current UTF-8 text/JSON results but is not a general binary artifact API.
+- If the protected system prompt plus the current user message alone exceed the effective context budget, LiteBot returns a context-overflow error instead of lossily truncating protected input.
+
 ## 🤝 Contribute & Roadmap
 
 PRs welcome! The codebase is intentionally small and readable. 🤗

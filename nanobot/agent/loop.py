@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
@@ -14,22 +13,29 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.context_manager import (
+    ContextManagementPolicy,
+    ContextManager,
+    ContextOverflowError,
+)
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
-from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.agent.runner import AgentRunner, AgentRunSpec
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.tool_result import GetToolResultTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
+from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
+from nanobot.session.artifacts import ToolArtifactStore
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
@@ -49,6 +55,7 @@ class AgentLoop:
     5. Sends responses back
     """
 
+    # Deprecated compatibility constant. New persistence uses artifact offload.
     _TOOL_RESULT_MAX_CHARS = 16_000
 
     def __init__(
@@ -68,6 +75,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
+        context_management_config: Any | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -89,6 +97,21 @@ class AgentLoop:
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
+        self.artifacts = ToolArtifactStore(workspace)
+        self._context_management_enabled = (
+            isinstance(provider.generation.max_tokens, int)
+            and provider.generation.max_tokens > 0
+        )
+        self.context_policy = ContextManagementPolicy.from_config(
+            context_management_config, provider.generation.max_tokens,
+        )
+        self.context_manager = ContextManager(
+            provider=provider, model=self.model,
+            context_window_tokens=context_window_tokens,
+            policy=self.context_policy, artifacts=self.artifacts,
+            sessions=self.sessions,
+        )
+        self._last_artifact_gc = 0.0
         self.runner = AgentRunner(provider)
         self.subagents = SubagentManager(
             provider=provider,
@@ -146,6 +169,9 @@ class AgentLoop:
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
+        self.tools.register(GetToolResultTool(
+            self.artifacts, default_page_size=self.context_policy.artifact_page_size,
+        ))
         if self.cron_service:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
@@ -180,6 +206,24 @@ class AgentLoop:
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
 
+    def _set_artifact_context(self, session_key: str | None) -> None:
+        if session_key and (tool := self.tools.get("get_tool_result")):
+            if isinstance(tool, GetToolResultTool):
+                tool.set_context(session_key)
+
+    def _maybe_collect_artifacts(self) -> None:
+        """Run lightweight artifact GC no more often than the configured interval."""
+        now = time.time()
+        if now - self._last_artifact_gc < self.context_policy.artifact_gc_interval_seconds:
+            return
+        result = self.artifacts.collect_garbage(
+            self.context_policy.artifact_ttl_days,
+            self.sessions.active_artifact_ids(),
+        )
+        self._last_artifact_gc = now
+        if result["deleted"] or result["invalid"]:
+            logger.info("Tool artifact GC: {}", result)
+
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
         """Remove <think>…</think> blocks that some models embed in content."""
@@ -209,6 +253,8 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session: Session | None = None,
+        session_key: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
 
@@ -225,6 +271,16 @@ class AgentLoop:
 
             def wants_streaming(self) -> bool:
                 return on_stream is not None
+
+            async def before_iteration(self, context: AgentHookContext) -> None:
+                loop_self._set_artifact_context(session_key)
+                if loop_self._context_management_enabled:
+                    await loop_self.context_manager.prepare(
+                        context.messages,
+                        loop_self.tools.get_definitions(),
+                        session=session,
+                        session_key=session_key,
+                    )
 
             async def on_stream(self, context: AgentHookContext, delta: str) -> None:
                 from nanobot.utils.helpers import strip_think
@@ -254,18 +310,26 @@ class AgentLoop:
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
                 loop_self._set_tool_context(channel, chat_id, message_id)
 
+            async def after_iteration(self, context: AgentHookContext) -> None:
+                if session_key:
+                    loop_self.context_manager.offload_tool_results(context.messages, session_key)
+
             def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
                 return loop_self._strip_think(content)
 
-        result = await self.runner.run(AgentRunSpec(
-            initial_messages=initial_messages,
-            tools=self.tools,
-            model=self.model,
-            max_iterations=self.max_iterations,
-            hook=_LoopHook(),
-            error_message="Sorry, I encountered an error calling the AI model.",
-            concurrent_tools=True,
-        ))
+        try:
+            result = await self.runner.run(AgentRunSpec(
+                initial_messages=initial_messages,
+                tools=self.tools,
+                model=self.model,
+                max_iterations=self.max_iterations,
+                hook=_LoopHook(),
+                error_message="Sorry, I encountered an error calling the AI model.",
+                concurrent_tools=True,
+            ))
+        except ContextOverflowError as exc:
+            logger.error("Context overflow: {}", exc)
+            return f"Context window exceeded: {exc}", [], initial_messages
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
@@ -404,18 +468,19 @@ class AgentLoop:
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=0)
+            history = session.get_context_history()
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
-                current_role=current_role,
+                current_role=current_role, session_summary=session.context_summary,
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                session=session, session_key=key,
             )
-            self._save_turn(session, all_msgs, 1 + len(history))
+            self._save_turn(session, all_msgs, start_message=messages[-1])
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
             return OutboundMessage(channel=channel, chat_id=chat_id,
@@ -426,6 +491,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        self._maybe_collect_artifacts()
 
         # Slash commands
         raw = msg.content.strip()
@@ -440,12 +506,13 @@ class AgentLoop:
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
-        history = session.get_history(max_messages=0)
+        history = session.get_context_history()
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
+            session_summary=session.context_summary,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
@@ -463,12 +530,13 @@ class AgentLoop:
             on_stream_end=on_stream_end,
             channel=msg.channel, chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
+            session=session, session_key=key,
         )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        self._save_turn(session, all_msgs, 1 + len(history))
+        self._save_turn(session, all_msgs, start_message=initial_messages[-1])
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
@@ -523,8 +591,6 @@ class AgentLoop:
 
             if block.get("type") == "text" and isinstance(block.get("text"), str):
                 text = block["text"]
-                if truncate_text and len(text) > self._TOOL_RESULT_MAX_CHARS:
-                    text = text[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
                 filtered.append({**block, "text": text})
                 continue
 
@@ -532,19 +598,23 @@ class AgentLoop:
 
         return filtered
 
-    def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
-        """Save new-turn messages into session, truncating large tool results."""
+    def _save_turn(
+        self, session: Session, messages: list[dict], skip: int | None = None,
+        *, start_message: dict | None = None,
+    ) -> None:
+        """Save new-turn messages into session; large tool results are already offloaded."""
         from datetime import datetime
+        if start_message is not None:
+            skip = next((i for i, item in enumerate(messages) if item is start_message), len(messages))
+        skip = skip or 0
         for m in messages[skip:]:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
             if role == "assistant" and not content and not entry.get("tool_calls"):
                 continue  # skip empty assistant messages — they poison session context
             if role == "tool":
-                if isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
-                    entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
-                elif isinstance(content, list):
-                    filtered = self._sanitize_persisted_blocks(content, truncate_text=True)
+                if isinstance(content, list):
+                    filtered = self._sanitize_persisted_blocks(content)
                     if not filtered:
                         continue
                     entry["content"] = filtered

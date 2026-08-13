@@ -26,7 +26,13 @@ python -m benchmarks run --suite integration
 python -m benchmarks run --suite live --allow-live
 python -m benchmarks run --suite live --allow-live --case live_web_search
 python -m benchmarks compare --baseline benchmark_results/<baseline> --candidate benchmark_results/<candidate>
+python -m benchmarks.live_context --output benchmark_results/live-context.json
+python -m benchmarks.context_management --output benchmark_results/context-management.json
 ```
+
+`benchmarks.live_context` runs five real-provider rolling-summary recall cases
+using the provider selected in the local nanobot configuration. It never writes
+provider credentials into benchmark results.
 
 The live suite uses the normal nanobot configuration. Missing credentials,
 network, MCP prerequisites, quotas, or external services are recorded as
@@ -44,4 +50,3 @@ in this nanobot version.
 Comparison treats `PASSED -> FAILED` as a correctness regression. Metrics are
 reported but do not have hard thresholds. `PASSED -> SKIPPED` is a coverage
 warning rather than a correctness failure.
-

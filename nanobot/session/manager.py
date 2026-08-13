@@ -1,6 +1,7 @@
 """Session management for conversation history."""
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,6 +32,10 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
+    context_summary: str = ""
+    context_summary_through: int = 0
+    context_summary_updated_at: datetime | None = None
+    context_schema_version: int = 1
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -92,10 +97,44 @@ class Session:
             out.append(entry)
         return out
 
+    def get_context_history(self) -> list[dict[str, Any]]:
+        """Return messages not represented by the rolling context summary."""
+        start = min(max(self.context_summary_through, self.last_consolidated, 0), len(self.messages))
+        return self._to_llm_messages(self.messages[start:])
+
+    @classmethod
+    def _to_llm_messages(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        start = cls._find_legal_start(messages)
+        out: list[dict[str, Any]] = []
+        for message in messages[start:]:
+            entry: dict[str, Any] = {"role": message["role"], "content": message.get("content", "")}
+            for key in ("tool_calls", "tool_call_id", "name"):
+                if key in message:
+                    entry[key] = message[key]
+            out.append(entry)
+        return out
+
+    def context_turn_ranges(self) -> list[tuple[int, int]]:
+        """Return complete user-turn ranges not yet represented by the summary."""
+        start = min(max(self.context_summary_through, self.last_consolidated, 0), len(self.messages))
+        ranges: list[tuple[int, int]] = []
+        turn_start: int | None = None
+        for idx in range(start, len(self.messages)):
+            if self.messages[idx].get("role") == "user":
+                if turn_start is not None:
+                    ranges.append((turn_start, idx))
+                turn_start = idx
+        if turn_start is not None:
+            ranges.append((turn_start, len(self.messages)))
+        return ranges
+
     def clear(self) -> None:
         """Clear all messages and reset session to initial state."""
         self.messages = []
         self.last_consolidated = 0
+        self.context_summary = ""
+        self.context_summary_through = 0
+        self.context_summary_updated_at = None
         self.updated_at = datetime.now()
 
     def retain_recent_legal_suffix(self, max_messages: int) -> None:
@@ -122,6 +161,7 @@ class Session:
         dropped = len(self.messages) - len(retained)
         self.messages = retained
         self.last_consolidated = max(0, self.last_consolidated - dropped)
+        self.context_summary_through = max(0, self.context_summary_through - dropped)
         self.updated_at = datetime.now()
 
 
@@ -188,6 +228,10 @@ class SessionManager:
             metadata = {}
             created_at = None
             last_consolidated = 0
+            context_summary = ""
+            context_summary_through = 0
+            context_summary_updated_at = None
+            context_schema_version = 1
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -201,6 +245,13 @@ class SessionManager:
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                        context_summary = data.get("context_summary", "")
+                        context_summary_through = data.get("context_summary_through", 0)
+                        context_summary_updated_at = (
+                            datetime.fromisoformat(data["context_summary_updated_at"])
+                            if data.get("context_summary_updated_at") else None
+                        )
+                        context_schema_version = data.get("context_schema_version", 1)
                     else:
                         messages.append(data)
 
@@ -209,7 +260,11 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
+                context_summary=context_summary,
+                context_summary_through=context_summary_through,
+                context_summary_updated_at=context_summary_updated_at,
+                context_schema_version=context_schema_version,
             )
         except Exception as e:
             logger.warning("Failed to load session {}: {}", key, e)
@@ -226,7 +281,14 @@ class SessionManager:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
+                "last_consolidated": session.last_consolidated,
+                "context_summary": session.context_summary,
+                "context_summary_through": session.context_summary_through,
+                "context_summary_updated_at": (
+                    session.context_summary_updated_at.isoformat()
+                    if session.context_summary_updated_at else None
+                ),
+                "context_schema_version": session.context_schema_version,
             }
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
@@ -237,6 +299,17 @@ class SessionManager:
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
+
+    def active_artifact_ids(self) -> set[str]:
+        """Return artifact IDs referenced by currently cached (active) sessions."""
+        pattern = re.compile(r"artifact_id:\s*([a-f0-9]{32})")
+        referenced: set[str] = set()
+        for session in self._cache.values():
+            values = [session.context_summary]
+            values.extend(str(message.get("content", "")) for message in session.messages)
+            for value in values:
+                referenced.update(pattern.findall(value))
+        return referenced
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """

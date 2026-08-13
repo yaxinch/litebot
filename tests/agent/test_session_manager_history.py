@@ -173,6 +173,42 @@ def test_empty_session_history():
     assert history == []
 
 
+def test_context_summary_metadata_round_trip(tmp_path):
+    from datetime import datetime
+
+    from nanobot.session.manager import SessionManager
+
+    manager = SessionManager(tmp_path)
+    session = manager.get_or_create("test:summary")
+    session.messages = [{"role": "user", "content": "old"}]
+    session.context_summary = "summary"
+    session.context_summary_through = 1
+    session.context_summary_updated_at = datetime(2026, 1, 2, 3, 4, 5)
+    manager.save(session)
+    manager.invalidate(session.key)
+
+    loaded = manager.get_or_create(session.key)
+    assert loaded.context_summary == "summary"
+    assert loaded.context_summary_through == 1
+    assert loaded.context_summary_updated_at == datetime(2026, 1, 2, 3, 4, 5)
+
+
+def test_active_artifact_ids_only_scans_cached_sessions(tmp_path):
+    from nanobot.session.manager import SessionManager
+
+    manager = SessionManager(tmp_path)
+    active = manager.get_or_create("test:active")
+    active.messages.append({"role": "tool", "content": "artifact_id: " + "a" * 32})
+    active.context_summary = "artifact_id: " + "b" * 32
+    manager.save(active)
+    inactive = manager.get_or_create("test:inactive")
+    inactive.messages.append({"role": "tool", "content": "artifact_id: " + "c" * 32})
+    manager.save(inactive)
+    manager.invalidate(inactive.key)
+
+    assert manager.active_artifact_ids() == {"a" * 32, "b" * 32}
+
+
 # --- Window cuts mid-group: assistant present but some tool results orphaned ---
 
 def test_window_cuts_mid_tool_group():

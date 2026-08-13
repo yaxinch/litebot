@@ -6,11 +6,9 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from nanobot.utils.helpers import current_time_str
-
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
-from nanobot.utils.helpers import build_assistant_message, detect_image_mime
+from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
 
 
 class ContextBuilder:
@@ -131,6 +129,7 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         channel: str | None = None,
         chat_id: str | None = None,
         current_role: str = "user",
+        session_summary: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
@@ -143,11 +142,13 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
 
-        return [
-            {"role": "system", "content": self.build_system_prompt(skill_names)},
-            *history,
-            {"role": current_role, "content": merged},
-        ]
+        messages = [{"role": "system", "content": self.build_system_prompt(skill_names)}]
+        if session_summary:
+            from nanobot.agent.context_summary import SUMMARY_HEADING
+            messages.append({"role": "system", "content": f"{SUMMARY_HEADING}\n{session_summary}"})
+        messages.extend(history)
+        messages.append({"role": current_role, "content": merged})
+        return messages
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
