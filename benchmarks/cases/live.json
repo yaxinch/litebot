@@ -1,0 +1,166 @@
+[
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_long_context_recall",
+    "suite": "live",
+    "category": "long_context",
+    "description": "Real-model long-context recall.",
+    "turns": [
+      {
+        "content": "The unique marker is LIVE-ORCHID-7429. After the filler, answer with that marker only. Filler: alpha beta gamma delta epsilon repeated for context."
+      }
+    ],
+    "requirements": [
+      "provider"
+    ],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "LIVE-ORCHID-7429"
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 0
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_multi_tool_local",
+    "suite": "live",
+    "category": "multi_tool",
+    "description": "Real model selects multiple local tools.",
+    "turns": [
+      {
+        "content": "Use lookup for alpha and beta, then report both exact values."
+      }
+    ],
+    "requirements": [
+      "provider"
+    ],
+    "assertions": [
+      {
+        "type": "tool_calls_min",
+        "value": 2
+      },
+      {
+        "type": "output_contains",
+        "value": "A-17"
+      },
+      {
+        "type": "output_contains",
+        "value": "B-29"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_tool_failure_recovery",
+    "suite": "live",
+    "category": "tool_failure",
+    "description": "Real model recovers from a deterministic failure.",
+    "turns": [
+      {
+        "content": "Call error_tool once with reason planned, then recover by calling echo with value fallback-ok and report it."
+      }
+    ],
+    "requirements": [
+      "provider"
+    ],
+    "assertions": [
+      {
+        "type": "tool_error_count",
+        "value": 1
+      },
+      {
+        "type": "output_contains",
+        "value": "fallback-ok"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_web_search",
+    "suite": "live",
+    "category": "web",
+    "description": "Real web search through the configured nanobot tool.",
+    "turns": [
+      {
+        "content": "Use web_search to find the official Python website, then briefly report its domain."
+      }
+    ],
+    "requirements": [
+      "provider",
+      "network"
+    ],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "value": "web_search"
+      },
+      {
+        "type": "tool_error_count",
+        "value": 0
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_web_fetch_and_shell",
+    "suite": "live",
+    "category": "web_shell",
+    "description": "Fetch a stable page and write a derived artifact with shell.",
+    "turns": [
+      {
+        "content": "Use web_fetch on https://example.com, then use exec to write shell-ok into web-shell.txt in the current workspace, and confirm completion."
+      }
+    ],
+    "requirements": [
+      "provider",
+      "network",
+      "shell"
+    ],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "value": "web_fetch"
+      },
+      {
+        "type": "tool_called",
+        "value": "exec"
+      },
+      {
+        "type": "file_contains",
+        "path": "web-shell.txt",
+        "value": "shell-ok"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "live_mcp_and_subagent",
+    "suite": "live",
+    "category": "mcp_subagent",
+    "description": "Use a local MCP tool and a real subagent.",
+    "turns": [
+      {
+        "content": "Call mcp_fixture_echo with value mcp-live, then spawn a subagent asked to respond subagent-live, and summarize both starts/results."
+      }
+    ],
+    "requirements": [
+      "provider",
+      "mcp",
+      "subagent"
+    ],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "value": "mcp_fixture_echo"
+      },
+      {
+        "type": "tool_called",
+        "value": "spawn"
+      }
+    ]
+  }
+]

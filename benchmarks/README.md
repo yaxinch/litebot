@@ -1,0 +1,47 @@
+# LiteBot baseline benchmark
+
+This directory is a benchmark harness, not a pytest suite. It exercises the
+nanobot v0.1.4.post6 agent abstractions and writes versioned JSONL results for
+future LiteBot regression comparisons.
+
+## Suites
+
+- `deterministic` (18 cases): fully offline, scripted provider and controlled
+  fixture tools. This is the default suite.
+- `integration` (4 cases): scripted provider with real filesystem, shell,
+  local stdio MCP, and subagent components. Run explicitly.
+- `live` (6 cases): configured real provider and selected real tools. It is
+  opt-in and requires `--allow-live`.
+
+Every case gets a disposable system-temporary workspace. Only copied artifacts
+are retained under `benchmark_results/<run-id>/artifacts/`; normal nanobot
+sessions, memory, and the repository workspace are not used as case workspaces.
+
+## Commands
+
+```powershell
+python -m benchmarks
+python -m benchmarks run --suite deterministic
+python -m benchmarks run --suite integration
+python -m benchmarks run --suite live --allow-live
+python -m benchmarks run --suite live --allow-live --case live_web_search
+python -m benchmarks compare --baseline benchmark_results/<baseline> --candidate benchmark_results/<candidate>
+```
+
+The live suite uses the normal nanobot configuration. Missing credentials,
+network, MCP prerequisites, quotas, or external services are recorded as
+`SKIPPED` where they can be identified as environment failures. Live results
+use rule assertions only; there is no LLM judge.
+
+## Output
+
+Each run contains `results.jsonl`, `summary.json`, and optional case artifacts.
+JSONL is flushed after every case. Tool arguments/results are truncated and
+secret-like fields are redacted. Provider usage is accumulated per LLM call,
+not taken from `AgentRunResult.usage`, which only represents its last response
+in this nanobot version.
+
+Comparison treats `PASSED -> FAILED` as a correctness regression. Metrics are
+reported but do not have hard thresholds. `PASSED -> SKIPPED` is a coverage
+warning rather than a correctness failure.
+

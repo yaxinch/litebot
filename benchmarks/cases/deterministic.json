@@ -1,0 +1,474 @@
+[
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_long_context_direct_recall",
+    "suite": "deterministic",
+    "category": "long_context",
+    "description": "Recall a unique fact from long input.",
+    "turns": [
+      {
+        "content": "Recall the marker from the long context."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "long_context"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "ORCHID-7429"
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 0
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_long_context_tail_instruction",
+    "suite": "deterministic",
+    "category": "long_context",
+    "description": "Honor the instruction at the end of a long input.",
+    "turns": [
+      {
+        "content": "Follow the final instruction in the fixture."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "long_context"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_equals",
+        "value": "TAIL-OK"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_long_context_history_boundary",
+    "suite": "deterministic",
+    "category": "long_context",
+    "description": "Keep a legal tool-call history boundary.",
+    "turns": [
+      {
+        "content": "Inspect the retained history."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "history_boundary"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "boundary valid"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_long_context_consolidation",
+    "suite": "deterministic",
+    "category": "long_context",
+    "description": "Represent a post-consolidation memory recall.",
+    "turns": [
+      {
+        "content": "Recall the archived marker."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "memory"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "ARCHIVE-88"
+      },
+      {
+        "type": "memory_contains",
+        "value": "ARCHIVE-88"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_history_same_session",
+    "suite": "deterministic",
+    "category": "history_recall",
+    "description": "Recall an earlier fact in one session.",
+    "turns": [
+      {
+        "content": "Project code is Aurora-17."
+      },
+      {
+        "content": "What is the project code?"
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "Aurora-17"
+      },
+      {
+        "type": "session_contains",
+        "value": "Aurora-17"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_history_after_reload",
+    "suite": "deterministic",
+    "category": "history_recall",
+    "description": "Recall after a JSONL session reload.",
+    "turns": [
+      {
+        "content": "Recall the reloaded fact."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "session_reload"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "RELOAD-31"
+      },
+      {
+        "type": "session_contains",
+        "value": "RELOAD-31"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_history_tool_result",
+    "suite": "deterministic",
+    "category": "history_recall",
+    "description": "Use a persisted tool result.",
+    "turns": [
+      {
+        "content": "What did the prior tool return?"
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "tool_history"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "TOOL-HISTORY-9"
+      },
+      {
+        "type": "session_contains",
+        "value": "TOOL-HISTORY-9"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_memory_long_term_recall",
+    "suite": "deterministic",
+    "category": "history_recall",
+    "description": "Recall a long-term memory fact.",
+    "turns": [
+      {
+        "content": "Recall my preferred codename."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [
+      "memory"
+    ],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "ARCHIVE-88"
+      },
+      {
+        "type": "memory_contains",
+        "value": "ARCHIVE-88"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_multi_tool_sequential",
+    "suite": "deterministic",
+    "category": "multi_tool",
+    "description": "Use two dependent tool rounds.",
+    "turns": [
+      {
+        "content": "Resolve alpha then echo it."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "A-17"
+      },
+      {
+        "type": "tool_rounds_exact",
+        "value": 2
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_multi_tool_parallel",
+    "suite": "deterministic",
+    "category": "multi_tool",
+    "description": "Call two tools in one round.",
+    "turns": [
+      {
+        "content": "Resolve alpha and beta."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "tool_rounds_exact",
+        "value": 1
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_multi_tool_result_synthesis",
+    "suite": "deterministic",
+    "category": "multi_tool",
+    "description": "Synthesize three tool results.",
+    "turns": [
+      {
+        "content": "Resolve three keys."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "A-17 B-29 G-41"
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 3
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_multi_round_tool_chain",
+    "suite": "deterministic",
+    "category": "multi_tool",
+    "description": "Complete three tool rounds.",
+    "turns": [
+      {
+        "content": "Run a three-step chain."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "tool_rounds_exact",
+        "value": 3
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 3
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_tool_invalid_parameters_recovery",
+    "suite": "deterministic",
+    "category": "tool_failure",
+    "description": "Recover from invalid tool parameters.",
+    "turns": [
+      {
+        "content": "Retry after validation failure."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "recovered"
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 2
+      },
+      {
+        "type": "tool_error_count",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_tool_error_result_recovery",
+    "suite": "deterministic",
+    "category": "tool_failure",
+    "description": "Recover from an Error result.",
+    "turns": [
+      {
+        "content": "Use a fallback after an error."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "fallback-ok"
+      },
+      {
+        "type": "tool_error_count",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_tool_exception_recovery",
+    "suite": "deterministic",
+    "category": "tool_failure",
+    "description": "Record and recover from an exception.",
+    "turns": [
+      {
+        "content": "Recover from an exception."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "exception handled"
+      },
+      {
+        "type": "tool_error_count",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_duplicate_tool_same_round",
+    "suite": "deterministic",
+    "category": "duplicate_tool",
+    "description": "Record duplicate calls in one round.",
+    "turns": [
+      {
+        "content": "Repeat echo in one round."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "tool_rounds_exact",
+        "value": 1
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_duplicate_tool_across_rounds",
+    "suite": "deterministic",
+    "category": "duplicate_tool",
+    "description": "Record duplicate calls across rounds.",
+    "turns": [
+      {
+        "content": "Repeat echo across rounds."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "tool_rounds_exact",
+        "value": 2
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "det_repeated_failure_until_limit",
+    "suite": "deterministic",
+    "category": "duplicate_tool",
+    "description": "Stop repeated failures at max iterations.",
+    "turns": [
+      {
+        "content": "Keep trying the failing tool."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "max_iterations": 3,
+    "assertions": [
+      {
+        "type": "stop_reason",
+        "value": "max_iterations"
+      },
+      {
+        "type": "tool_rounds_exact",
+        "value": 3
+      },
+      {
+        "type": "tool_error_count",
+        "value": 3
+      }
+    ]
+  }
+]

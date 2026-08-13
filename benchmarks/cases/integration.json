@@ -1,0 +1,110 @@
+[
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "int_real_filesystem_chain",
+    "suite": "integration",
+    "category": "filesystem",
+    "description": "Run real filesystem tools in an isolated workspace.",
+    "turns": [
+      {
+        "content": "Write, edit, and read the fixture file."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [],
+    "assertions": [
+      {
+        "type": "file_contains",
+        "path": "artifact.txt",
+        "value": "edited"
+      },
+      {
+        "type": "tool_calls_exact",
+        "value": 4
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "int_real_shell_chain",
+    "suite": "integration",
+    "category": "shell",
+    "description": "Run a safe real shell command in an isolated workspace.",
+    "turns": [
+      {
+        "content": "Create a shell artifact and read it."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [
+      "shell"
+    ],
+    "assertions": [
+      {
+        "type": "file_contains",
+        "path": "shell-artifact.txt",
+        "value": "shell-ok"
+      },
+      {
+        "type": "tool_called",
+        "value": "exec"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "int_local_mcp_roundtrip",
+    "suite": "integration",
+    "category": "mcp",
+    "description": "Discover and invoke a local stdio MCP fixture.",
+    "turns": [
+      {
+        "content": "Call the local MCP echo tool."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [
+      "mcp"
+    ],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "mcp-ok"
+      },
+      {
+        "type": "tool_called",
+        "value": "mcp_fixture_echo"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-benchmark-case/v1",
+    "id": "int_subagent_roundtrip",
+    "suite": "integration",
+    "category": "subagent",
+    "description": "Run a real SubagentManager task and receive its bus result.",
+    "turns": [
+      {
+        "content": "Delegate a deterministic task."
+      }
+    ],
+    "provider_script": "default",
+    "fixtures": [],
+    "requirements": [
+      "subagent"
+    ],
+    "assertions": [
+      {
+        "type": "output_contains",
+        "value": "subagent-ok"
+      },
+      {
+        "type": "tool_called",
+        "value": "spawn"
+      }
+    ]
+  }
+]
