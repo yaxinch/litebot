@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 from copy import deepcopy
@@ -37,6 +39,7 @@ def add_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
 class BenchmarkCollector:
     rounds: list[dict[str, Any]] = field(default_factory=list)
     tool_events: list[dict[str, Any]] = field(default_factory=list)
+    context_events: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def tool_calls(self) -> int:
@@ -57,6 +60,19 @@ class BenchmarkCollector:
             total = add_usage(total, item.get("usage", {}))
         return total
 
+    @property
+    def peak_prompt_tokens(self) -> int:
+        return max((int(item.get("usage", {}).get("prompt_tokens", 0)) for item in self.rounds), default=0)
+
+    @property
+    def usage_complete(self) -> bool:
+        return bool(self.rounds) and all(
+            all(key in item.get("usage", {}) and int(item["usage"][key]) >= 0
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens"))
+            and int(item["usage"].get("total_tokens", 0)) > 0
+            for item in self.rounds
+        )
+
 
 class RecordingProvider(LLMProvider):
     """Transparent provider proxy recording every LLM call."""
@@ -71,24 +87,35 @@ class RecordingProvider(LLMProvider):
     async def chat(self, **kwargs: Any) -> LLMResponse:
         started = time.perf_counter()
         response = await self.inner.chat(**kwargs)
-        self._record(response, started, False)
+        self._record(response, started, False, kwargs)
         return response
 
     async def chat_stream(self, **kwargs: Any) -> LLMResponse:
         started = time.perf_counter()
         response = await self.inner.chat_stream(**kwargs)
-        self._record(response, started, True)
+        self._record(response, started, True, kwargs)
         return response
 
-    def _record(self, response: LLMResponse, started: float, streaming: bool) -> None:
+    def _record(self, response: LLMResponse, started: float, streaming: bool, request: dict[str, Any]) -> None:
+        messages = request.get("messages") or []
+        phase = self.phase
+        if messages and str(messages[0].get("content", "")).startswith("You compact session context"):
+            phase = "rolling_summary"
+        tools = request.get("tools") or []
         self.collector.rounds.append({
             "index": len(self.collector.rounds),
-            "phase": self.phase,
+            "phase": phase,
             "latency_ms": round((time.perf_counter() - started) * 1000, 3),
             "streaming": streaming,
             "usage": normalize_usage(response.usage),
             "finish_reason": response.finish_reason,
             "tool_calls": [{"id": tc.id, "name": tc.name, "arguments": redact(tc.arguments)} for tc in response.tool_calls],
+            "request": {
+                "model": request.get("model"),
+                "temperature": request.get("temperature", self.generation.temperature),
+                "max_tokens": request.get("max_tokens", self.generation.max_tokens),
+                "tool_schema_sha256": hashlib.sha256(json.dumps(tools, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+            },
         })
 
     def get_default_model(self) -> str:
@@ -117,9 +144,16 @@ class RecordingTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return deepcopy(self.inner.parameters)
 
+    def set_context(self, session_key: str) -> None:
+        if hasattr(self.inner, "set_context"):
+            self.inner.set_context(session_key)
+
     async def execute(self, **kwargs: Any) -> Any:
         started = time.perf_counter()
-        event = {"name": self.name, "arguments": redact(kwargs)}
+        event = {
+            "name": self.name, "arguments": redact(kwargs),
+            "arguments_sha256": hashlib.sha256(json.dumps(kwargs, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+        }
         try:
             result = await self.inner.execute(**kwargs)
         except BaseException as exc:
@@ -127,7 +161,12 @@ class RecordingTool(Tool):
             raise
         else:
             is_error = isinstance(result, str) and result.startswith("Error")
-            event.update(status="error_result" if is_error else "ok", detail=redact(result))
+            serialized = json.dumps(result, sort_keys=True, ensure_ascii=False) if not isinstance(result, str) else result
+            event.update(
+                status="error_result" if is_error else "ok", detail=redact(result),
+                result_sha256=hashlib.sha256(serialized.encode()).hexdigest(),
+                result_size_bytes=len(serialized.encode()),
+            )
             return result
         finally:
             event["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)

@@ -101,6 +101,8 @@ class ContextManager:
         self.sessions = sessions
         self.summarizer = ContextSummarizer(provider, model)
         self.last_prepared: PreparedContext | None = None
+        self.telemetry: list[dict[str, Any]] = []
+        self.total_offloaded_artifacts = 0
 
     @property
     def effective_budget(self) -> int:
@@ -135,6 +137,7 @@ class ContextManager:
             except Exception as exc:
                 preview = payload.decode("utf-8", errors="replace")[:self.policy.tool_summary_max_chars]
                 message["content"] = f"[Tool Result Offload Failed: {type(exc).__name__}]\n{preview}"
+        self.total_offloaded_artifacts += count
         return count
 
     @staticmethod
@@ -229,4 +232,12 @@ class ContextManager:
         prepared.estimated_tokens = estimated
         prepared.token_source = source
         self.last_prepared = prepared
+        self.telemetry.append({
+            "estimated_tokens": estimated,
+            "token_source": source,
+            "compacted_turns": prepared.compacted_turns,
+            "hard_truncated_turns": prepared.hard_truncated_turns,
+            "offloaded_artifacts": prepared.offloaded_artifacts,
+            "actions": list(prepared.actions),
+        })
         return prepared

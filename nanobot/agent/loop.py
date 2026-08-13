@@ -8,7 +8,7 @@ import os
 import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from loguru import logger
 
@@ -76,6 +76,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         context_management_config: Any | None = None,
+        benchmark_context_mode: Literal["baseline", "context_management"] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -93,12 +94,13 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
+        self.benchmark_context_mode = benchmark_context_mode
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.artifacts = ToolArtifactStore(workspace)
-        self._context_management_enabled = (
+        self._context_management_enabled = benchmark_context_mode != "baseline" and (
             isinstance(provider.generation.max_tokens, int)
             and provider.generation.max_tokens > 0
         )
@@ -208,7 +210,7 @@ class AgentLoop:
 
     def _set_artifact_context(self, session_key: str | None) -> None:
         if session_key and (tool := self.tools.get("get_tool_result")):
-            if isinstance(tool, GetToolResultTool):
+            if hasattr(tool, "set_context"):
                 tool.set_context(session_key)
 
     def _maybe_collect_artifacts(self) -> None:
@@ -223,6 +225,26 @@ class AgentLoop:
         self._last_artifact_gc = now
         if result["deleted"] or result["invalid"]:
             logger.info("Tool artifact GC: {}", result)
+
+    def _session_context(self, session: Session) -> tuple[list[dict[str, Any]], str | None]:
+        """Select the pre- or post-context-management history view.
+
+        The explicit baseline mode exists for controlled benchmarks only.  It
+        deliberately mirrors the v0.1.4.post6 loop: full unconsolidated history
+        and no rolling-summary system message.
+        """
+        if self.benchmark_context_mode == "baseline":
+            return session.get_history(max_messages=0), None
+        return session.get_context_history(), session.context_summary
+
+    async def _maybe_consolidate_memory(self, session: Session) -> None:
+        """Keep legacy memory consolidation outside controlled context A/B runs."""
+        if self.benchmark_context_mode is None:
+            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+
+    def _schedule_memory_consolidation(self, session: Session) -> None:
+        if self.benchmark_context_mode is None:
+            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -311,7 +333,7 @@ class AgentLoop:
                 loop_self._set_tool_context(channel, chat_id, message_id)
 
             async def after_iteration(self, context: AgentHookContext) -> None:
-                if session_key:
+                if loop_self._context_management_enabled and session_key:
                     loop_self.context_manager.offload_tool_results(context.messages, session_key)
 
             def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
@@ -326,9 +348,20 @@ class AgentLoop:
                 hook=_LoopHook(),
                 error_message="Sorry, I encountered an error calling the AI model.",
                 concurrent_tools=True,
+                temperature=self.provider.generation.temperature,
+                max_tokens=self.provider.generation.max_tokens,
             ))
         except ContextOverflowError as exc:
             logger.error("Context overflow: {}", exc)
+            self.context_manager.telemetry.append({
+                "estimated_tokens": None,
+                "token_source": None,
+                "compacted_turns": 0,
+                "hard_truncated_turns": 0,
+                "offloaded_artifacts": 0,
+                "actions": ["context_overflow"],
+                "error": str(exc),
+            })
             return f"Context window exceeded: {exc}", [], initial_messages
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
@@ -466,14 +499,14 @@ class AgentLoop:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
-            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+            await self._maybe_consolidate_memory(session)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_context_history()
+            history, session_summary = self._session_context(session)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
-                current_role=current_role, session_summary=session.context_summary,
+                current_role=current_role, session_summary=session_summary,
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
@@ -482,7 +515,7 @@ class AgentLoop:
             )
             self._save_turn(session, all_msgs, start_message=messages[-1])
             self.sessions.save(session)
-            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+            self._schedule_memory_consolidation(session)
             return OutboundMessage(channel=channel, chat_id=chat_id,
                                   content=final_content or "Background task completed.")
 
@@ -491,7 +524,8 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        self._maybe_collect_artifacts()
+        if self.benchmark_context_mode != "baseline":
+            self._maybe_collect_artifacts()
 
         # Slash commands
         raw = msg.content.strip()
@@ -499,20 +533,20 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
-        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        await self._maybe_consolidate_memory(session)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
-        history = session.get_context_history()
+        history, session_summary = self._session_context(session)
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
-            session_summary=session.context_summary,
+            session_summary=session_summary,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
@@ -538,7 +572,7 @@ class AgentLoop:
 
         self._save_turn(session, all_msgs, start_message=initial_messages[-1])
         self.sessions.save(session)
-        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._schedule_memory_consolidation(session)
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
@@ -591,6 +625,8 @@ class AgentLoop:
 
             if block.get("type") == "text" and isinstance(block.get("text"), str):
                 text = block["text"]
+                if truncate_text and len(text) > self._TOOL_RESULT_MAX_CHARS:
+                    text = text[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
                 filtered.append({**block, "text": text})
                 continue
 
@@ -613,8 +649,12 @@ class AgentLoop:
             if role == "assistant" and not content and not entry.get("tool_calls"):
                 continue  # skip empty assistant messages — they poison session context
             if role == "tool":
-                if isinstance(content, list):
-                    filtered = self._sanitize_persisted_blocks(content)
+                if self.benchmark_context_mode == "baseline" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
+                    entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
+                elif isinstance(content, list):
+                    filtered = self._sanitize_persisted_blocks(
+                        content, truncate_text=self.benchmark_context_mode == "baseline",
+                    )
                     if not filtered:
                         continue
                     entry["content"] = filtered

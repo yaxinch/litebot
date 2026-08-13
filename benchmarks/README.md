@@ -28,7 +28,15 @@ python -m benchmarks run --suite live --allow-live --case live_web_search
 python -m benchmarks compare --baseline benchmark_results/<baseline> --candidate benchmark_results/<candidate>
 python -m benchmarks.live_context --output benchmark_results/live-context.json
 python -m benchmarks.context_management --output benchmark_results/context-management.json
+python -m benchmarks ab-context --suite long-context --repetitions 3
+python -m benchmarks ab-context --suite large-tool-result --repetitions 3
 ```
+
+`ab-context` is the strict live-provider paired benchmark. It runs the same
+`AgentLoop` in explicit `baseline` and `context_management` modes, records all
+agent and rolling-summary model calls, and refuses to publish a reduction when
+provider usage or paired control checks are incomplete. The long-context suite
+is the primary overall result; large Tool Result measurements remain separate.
 
 `benchmarks.live_context` runs five real-provider rolling-summary recall cases
 using the provider selected in the local nanobot configuration. It never writes
