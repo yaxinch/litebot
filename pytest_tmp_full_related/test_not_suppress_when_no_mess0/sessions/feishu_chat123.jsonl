@@ -1,0 +1,3 @@
+{"_type": "metadata", "key": "feishu:chat123", "created_at": "2026-08-14T16:52:19.523880", "updated_at": "2026-08-14T16:52:20.141260", "metadata": {}, "last_consolidated": 0, "context_summary": "", "context_summary_through": 0, "context_summary_updated_at": null, "context_schema_version": 1}
+{"role": "user", "content": "Hi", "timestamp": "2026-08-14T16:52:20.141260"}
+{"role": "assistant", "content": "Hello!", "timestamp": "2026-08-14T16:52:20.141260"}

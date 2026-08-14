@@ -92,10 +92,12 @@ def test_policy_environment_override(monkeypatch):
     monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_SEARCHES_PER_SESSION", "4")
     monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_READS_PER_SESSION", "2")
     monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_RETURNED_CHARS_PER_SESSION", "8192")
+    monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_SEARCH_TOTAL_SNIPPET_CHARS", "1777")
     policy = ContextManagementPolicy.from_config(ContextManagementConfig(), 2048)
     assert policy.recent_turns == 12
     assert policy.tool_offload_threshold_bytes == 99
     assert policy.artifact_max_searches_per_session == 4
     assert policy.artifact_max_reads_per_session == 2
     assert policy.artifact_max_returned_chars_per_session == 8192
+    assert policy.artifact_search_total_snippet_chars == 1777
     assert policy.output_reserve_tokens == 2048

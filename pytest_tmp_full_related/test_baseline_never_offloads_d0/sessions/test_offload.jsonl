@@ -1,0 +1,5 @@
+{"_type": "metadata", "key": "test:offload", "created_at": "2026-08-14T16:52:39.135556", "updated_at": "2026-08-14T16:52:39.728954", "metadata": {}, "last_consolidated": 0, "context_summary": "", "context_summary_through": 0, "context_summary_updated_at": null, "context_schema_version": 1}
+{"role": "user", "content": "old", "timestamp": "2026-08-14T16:52:39.135556"}
+{"role": "assistant", "content": "stored", "timestamp": "2026-08-14T16:52:39.135556"}
+{"role": "user", "content": "new", "timestamp": "2026-08-14T16:52:39.728954"}
+{"role": "assistant", "content": "ok", "timestamp": "2026-08-14T16:52:39.728954"}

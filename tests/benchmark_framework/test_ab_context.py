@@ -9,6 +9,7 @@ from benchmarks.ab_context import (
     _retrieval_path,
     aggregate,
     cases_for,
+    parser,
     render_markdown,
     validate_pair,
 )
@@ -38,6 +39,16 @@ def test_validate_pair_detects_control_and_usage_violations():
     candidate["temperature"] = 0.1
     candidate["usage_complete"] = False
     assert validate_pair(baseline, candidate) == ["temperature_mismatch", "incomplete_provider_usage"]
+
+
+def test_preview_experiment_cli_parameters_are_explicit():
+    args = parser().parse_args([
+        "--suite", "large-tool-result",
+        "--tool-summary-max-chars", "8192",
+        "--artifact-search-total-snippet-chars", "1777",
+    ])
+    assert args.tool_summary_max_chars == 8192
+    assert args.artifact_search_total_snippet_chars == 1777
 
 
 def test_aggregate_weighted_mean_median_and_report(monkeypatch):

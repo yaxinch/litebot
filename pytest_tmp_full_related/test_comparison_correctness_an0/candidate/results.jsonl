@@ -1,0 +1,2 @@
+{"case_id": "a", "status": "FAILED", "duration_ms": 20, "tool_calls": 2, "tool_errors": 1}
+{"case_id": "b", "status": "SKIPPED", "duration_ms": 0, "tool_calls": 0, "tool_errors": 0}

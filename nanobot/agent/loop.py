@@ -185,7 +185,10 @@ class AgentLoop:
             self.artifacts, default_page_size=self.context_policy.artifact_page_size,
             guard=retrieval_guard,
         ))
-        self.tools.register(SearchToolResultTool(self.artifacts, retrieval_guard))
+        self.tools.register(SearchToolResultTool(
+            self.artifacts, retrieval_guard,
+            total_snippet_chars=self.context_policy.artifact_search_total_snippet_chars,
+        ))
         if self.cron_service:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
@@ -538,7 +541,10 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        if self.benchmark_context_mode != "baseline":
+        if (
+            getattr(self, "benchmark_context_mode", None) != "baseline"
+            and hasattr(self, "context_manager")
+        ):
             self._maybe_collect_artifacts()
 
         # Slash commands
@@ -657,17 +663,23 @@ class AgentLoop:
         if start_message is not None:
             skip = next((i for i, item in enumerate(messages) if item is start_message), len(messages))
         skip = skip or 0
+        benchmark_mode = getattr(self, "benchmark_context_mode", None)
+        if (
+            benchmark_mode != "baseline"
+            and hasattr(self, "context_manager")
+        ):
+            self.context_manager.compact_retrieval_history_for_persistence(messages[skip:])
         for m in messages[skip:]:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
             if role == "assistant" and not content and not entry.get("tool_calls"):
                 continue  # skip empty assistant messages — they poison session context
             if role == "tool":
-                if self.benchmark_context_mode == "baseline" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
+                if benchmark_mode == "baseline" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
                     entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
                 elif isinstance(content, list):
                     filtered = self._sanitize_persisted_blocks(
-                        content, truncate_text=self.benchmark_context_mode == "baseline",
+                        content, truncate_text=benchmark_mode == "baseline",
                     )
                     if not filtered:
                         continue

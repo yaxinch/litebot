@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,6 +13,9 @@ from nanobot.config.schema import ContextManagementConfig
 from nanobot.session.artifacts import ToolArtifactStore
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.helpers import estimate_prompt_tokens_chain
+
+_RETRIEVAL_TOOLS = {"get_tool_result", "search_tool_result"}
+_RETRIEVAL_RECEIPT = "[Artifact Retrieval Compacted]"
 
 
 class ContextOverflowError(RuntimeError):
@@ -27,8 +31,9 @@ class ContextManagementPolicy:
     safety_margin_tokens: int = 1024
     output_reserve_tokens: int = 4096
     tool_offload_threshold_bytes: int = 8192
-    tool_summary_max_chars: int = 1000
+    tool_summary_max_chars: int = 1024
     artifact_page_size: int = 4096
+    artifact_search_total_snippet_chars: int = 2000
     artifact_max_reads_per_session: int = 3
     artifact_max_searches_per_session: int = 5
     artifact_max_returned_chars_per_session: int = 12_288
@@ -56,6 +61,7 @@ class ContextManagementPolicy:
             "tool_offload_threshold_bytes": cfg.tool_offload_threshold_bytes,
             "tool_summary_max_chars": cfg.tool_summary_max_chars,
             "artifact_page_size": cfg.artifact_page_size,
+            "artifact_search_total_snippet_chars": cfg.artifact_search_total_snippet_chars,
             "artifact_max_reads_per_session": cfg.artifact_max_reads_per_session,
             "artifact_max_searches_per_session": cfg.artifact_max_searches_per_session,
             "artifact_max_returned_chars_per_session": cfg.artifact_max_returned_chars_per_session,
@@ -69,6 +75,7 @@ class ContextManagementPolicy:
             "compaction_target": float, "safety_margin_tokens": int,
             "output_reserve_tokens": int, "tool_offload_threshold_bytes": int,
             "tool_summary_max_chars": int, "artifact_page_size": int,
+            "artifact_search_total_snippet_chars": int,
             "artifact_max_reads_per_session": int,
             "artifact_max_searches_per_session": int,
             "artifact_max_returned_chars_per_session": int,
@@ -96,6 +103,7 @@ class PreparedContext:
     compacted_turns: int = 0
     hard_truncated_turns: int = 0
     offloaded_artifacts: int = 0
+    compacted_retrieval_results: int = 0
     actions: list[str] = field(default_factory=list)
 
 
@@ -146,9 +154,9 @@ class ContextManager:
                     f"line_count: {artifact.line_count}\n"
                     f"tool: {artifact.tool_name}\n"
                     f"sha256: {artifact.sha256}\nsummary: {preview}\n"
-                    "retrieval: Unknown location -> search_tool_result(artifact_id, query). "
-                    "For an unknown standalone identifier/marker, search for a likely literal such as "
-                    "RESULT or for the newline character to inspect bounded line boundaries. "
+                    "retrieval: Unknown location -> call search_tool_result once with multiple likely "
+                    "literals, for example queries=[\"MARKER\", \"RESULT\", \"LARGE-RESULT\"]. "
+                    "When search returns answer_ready=true, answer directly. "
                     "Known location or more local context -> "
                     f'get_tool_result(artifact_id="{artifact.artifact_id}", offset=<known_offset>, limit<={self.policy.artifact_page_size}).'
                 )
@@ -158,6 +166,132 @@ class ContextManager:
                 message["content"] = f"[Tool Result Offload Failed: {type(exc).__name__}]\n{preview}"
         self.total_offloaded_artifacts += count
         return count
+
+    @staticmethod
+    def _retrieval_receipt(
+        message: dict[str, Any], *, retain_excerpt: bool = False,
+    ) -> str:
+        content = message.get("content")
+        try:
+            result = json.loads(content) if isinstance(content, str) else content
+        except (TypeError, json.JSONDecodeError):
+            result = None
+        if not isinstance(result, dict):
+            return f"{_RETRIEVAL_RECEIPT}\ntool: {message.get('name', 'retrieval')}\nstatus: unavailable"
+
+        lines = [
+            _RETRIEVAL_RECEIPT,
+            f"tool: {message.get('name', 'retrieval')}",
+            f"artifact_id: {result.get('artifact_id', 'unknown')}",
+            f"status: {result.get('status', 'ok')}",
+        ]
+        if "query" in result:
+            lines.append(f"query: {json.dumps(result['query'], ensure_ascii=False)}")
+        elif "queries" in result:
+            lines.append(f"queries: {json.dumps(result['queries'], ensure_ascii=False)}")
+        if "offset" in result:
+            lines.append(f"range: [{result.get('offset')}, {result.get('end')})")
+        offsets = [
+            match.get("offset") for match in result.get("matches", [])
+            if isinstance(match, dict) and match.get("offset") is not None
+        ]
+        if offsets:
+            lines.append(f"match_offsets: {offsets}")
+        if result.get("answer_ready"):
+            lines.append("answer_ready: true")
+        if result.get("answer_candidates"):
+            lines.append(
+                f"answer_candidates: {json.dumps(result['answer_candidates'], ensure_ascii=False)}"
+            )
+        if retain_excerpt:
+            excerpt = ""
+            matches = [match for match in result.get("matches", []) if isinstance(match, dict)]
+            if matches and isinstance(matches[0].get("snippet"), str):
+                match = matches[0]
+                snippet = match["snippet"]
+                relative = max(0, int(match.get("offset", 0)) - int(match.get("snippet_start", 0)))
+                start = max(0, relative - 160)
+                excerpt = snippet[start:start + 320]
+            elif isinstance(result.get("content"), str):
+                content_text = result["content"]
+                excerpt = (
+                    content_text if len(content_text) <= 320
+                    else content_text[:160] + " … " + content_text[-160:]
+                )
+            if excerpt:
+                lines.append(f"retained_excerpt: {json.dumps(excerpt, ensure_ascii=False)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def compact_transient_retrieval_results(messages: list[dict[str, Any]]) -> int:
+        """Compact old retrieval responses while retaining the latest useful match."""
+        candidates: list[tuple[int, bool]] = []
+        for index, message in enumerate(messages):
+            content = message.get("content")
+            if (
+                message.get("role") != "tool"
+                or message.get("name") not in _RETRIEVAL_TOOLS
+                or str(content).startswith(_RETRIEVAL_RECEIPT)
+            ):
+                continue
+            matched = False
+            try:
+                parsed = json.loads(content) if isinstance(content, str) else content
+                matched = isinstance(parsed, dict) and bool(parsed.get("matches"))
+            except (TypeError, json.JSONDecodeError):
+                pass
+            candidates.append((index, matched))
+        if len(candidates) <= 1:
+            return 0
+
+        matched_indices = [index for index, matched in candidates if matched]
+        keep = matched_indices[-1] if matched_indices else candidates[-1][0]
+        compacted = 0
+        for index, _ in candidates:
+            if index == keep:
+                continue
+            messages[index]["content"] = ContextManager._retrieval_receipt(messages[index])
+            ContextManager._strip_retrieval_assistant_payload(messages, index)
+            compacted += 1
+        return compacted
+
+    @staticmethod
+    def _strip_retrieval_assistant_payload(
+        messages: list[dict[str, Any]], tool_index: int,
+    ) -> None:
+        tool_call_id = str(messages[tool_index].get("tool_call_id", ""))
+        if not tool_call_id:
+            return
+        for index in range(tool_index - 1, -1, -1):
+            assistant = messages[index]
+            if assistant.get("role") != "assistant":
+                continue
+            call_ids = {
+                str(call.get("id", "")) for call in assistant.get("tool_calls") or []
+                if isinstance(call, dict)
+            }
+            if tool_call_id in call_ids:
+                assistant["content"] = ""
+                assistant.pop("reasoning_content", None)
+                assistant.pop("thinking_blocks", None)
+                return
+
+    @staticmethod
+    def compact_retrieval_history_for_persistence(messages: list[dict[str, Any]]) -> int:
+        """Remove retrieval bodies before session persistence or summary input."""
+        compacted = 0
+        for index, message in enumerate(messages):
+            if (
+                message.get("role") == "tool"
+                and message.get("name") in _RETRIEVAL_TOOLS
+                and not str(message.get("content", "")).startswith(_RETRIEVAL_RECEIPT)
+            ):
+                message["content"] = ContextManager._retrieval_receipt(
+                    message, retain_excerpt=True,
+                )
+                ContextManager._strip_retrieval_assistant_payload(messages, index)
+                compacted += 1
+        return compacted
 
     @staticmethod
     def _summary_index(messages: list[dict[str, Any]]) -> int | None:
@@ -194,9 +328,15 @@ class ContextManager:
         session: Session | None = None, session_key: str | None = None,
     ) -> PreparedContext:
         work = messages
+        compacted_retrieval = self.compact_transient_retrieval_results(work)
         offloaded = self.offload_tool_results(work, session_key) if session_key else 0
         estimated, source = self._estimate(work, tools)
-        prepared = PreparedContext(work, estimated, source, offloaded_artifacts=offloaded)
+        prepared = PreparedContext(
+            work, estimated, source, offloaded_artifacts=offloaded,
+            compacted_retrieval_results=compacted_retrieval,
+        )
+        if compacted_retrieval:
+            prepared.actions.append("retrieval_compacted")
         soft_limit = int(self.effective_budget * self.policy.soft_threshold)
         target = int(self.effective_budget * self.policy.compaction_target)
         hard_limit = int(self.effective_budget * self.policy.hard_threshold)
@@ -209,6 +349,7 @@ class ContextManager:
                     break
                 start, end = eligible[0][0], eligible[-1][1]
                 chunk = Session._to_llm_messages(session.messages[start:end])
+                self.compact_retrieval_history_for_persistence(chunk)
                 summary = await self.summarizer.summarize(session.context_summary, chunk)
                 if not summary:
                     prepared.actions.append("summary_failed")
@@ -257,6 +398,7 @@ class ContextManager:
             "compacted_turns": prepared.compacted_turns,
             "hard_truncated_turns": prepared.hard_truncated_turns,
             "offloaded_artifacts": prepared.offloaded_artifacts,
+            "compacted_retrieval_results": prepared.compacted_retrieval_results,
             "actions": list(prepared.actions),
         })
         return prepared

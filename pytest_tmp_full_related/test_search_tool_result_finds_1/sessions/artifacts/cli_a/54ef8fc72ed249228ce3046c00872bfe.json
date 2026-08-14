@@ -1,0 +1,13 @@
+{
+  "artifact_id": "54ef8fc72ed249228ce3046c00872bfe",
+  "session_key": "cli:a",
+  "tool_name": "read",
+  "tool_call_id": "call",
+  "content_type": "text/plain",
+  "encoding": "utf-8",
+  "size_bytes": 16,
+  "line_count": 1,
+  "sha256": "c49fa22b5416c267c58215037ebcfd9d8818df7cde8483cd6bb18c43ae583196",
+  "created_at": "2026-08-14T16:52:14.195829",
+  "relative_path": "sessions/artifacts/cli_a/54ef8fc72ed249228ce3046c00872bfe.data"
+}

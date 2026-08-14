@@ -426,7 +426,11 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             model=settings["model"], max_iterations=settings["max_iterations"],
             context_window_tokens=16_384, restrict_to_workspace=True,
             session_manager=sessions, benchmark_context_mode=mode,
-            context_management_config=ContextManagementConfig(output_reserve_tokens=2048),
+            context_management_config=ContextManagementConfig(
+                output_reserve_tokens=2048,
+                tool_summary_max_chars=settings["tool_summary_max_chars"],
+                artifact_search_total_snippet_chars=settings["artifact_search_total_snippet_chars"],
+            ),
         )
         registry = ToolRegistry()
         retrieval_guard = ArtifactRetrievalGuard(
@@ -438,7 +442,10 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
         get_tool: Tool = GetToolResultTool(
             loop.artifacts, loop.context_policy.artifact_page_size, retrieval_guard,
         )
-        search_tool: Tool = SearchToolResultTool(loop.artifacts, retrieval_guard)
+        search_tool: Tool = SearchToolResultTool(
+            loop.artifacts, retrieval_guard,
+            total_snippet_chars=loop.context_policy.artifact_search_total_snippet_chars,
+        )
         if mode == "baseline":
             get_tool = _BaselineUnavailableRetrievalTool(get_tool)
             search_tool = _BaselineUnavailableRetrievalTool(search_tool)
@@ -474,6 +481,8 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             "provider": settings["provider"], "model": settings["model"], "temperature": 0,
             "max_tokens": 8192, "context_window_tokens": 16_384, "max_iterations": settings["max_iterations"],
+            "tool_summary_max_chars": settings["tool_summary_max_chars"],
+            "artifact_search_total_snippet_chars": settings["artifact_search_total_snippet_chars"],
             "usage": usage, "usage_complete": collector.usage_complete,
             "peak_prompt_tokens": collector.peak_prompt_tokens, "model_call_count": len(collector.rounds),
             "compaction_count": sum(bool(event.get("compacted_turns")) for event in context_events),
@@ -505,7 +514,11 @@ def _tool_signature(row: dict[str, Any]) -> list[tuple[str, str | None, str | No
 
 def validate_pair(baseline: dict[str, Any], candidate: dict[str, Any]) -> list[str]:
     violations: list[str] = []
-    for key in ("case_id", "repetition", "provider", "model", "temperature", "max_tokens", "context_window_tokens", "max_iterations"):
+    for key in (
+        "case_id", "repetition", "provider", "model", "temperature", "max_tokens",
+        "context_window_tokens", "max_iterations", "tool_summary_max_chars",
+        "artifact_search_total_snippet_chars",
+    ):
         if baseline.get(key) != candidate.get(key):
             violations.append(f"{key}_mismatch")
     base_agent = [tuple(item) for item in baseline["request_signatures"]]
@@ -546,6 +559,32 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
         modes = {mode: [row for row in valid_rows if row["case_id"] == case.id and row["mode"] == mode] for mode in ("baseline", "context_management")}
         totals = {mode: sum(row["usage"]["total_tokens"] for row in items) for mode, items in modes.items()}
         reduction = None if not totals["baseline"] else (totals["baseline"] - totals["context_management"]) / totals["baseline"] * 100
+
+        def distribution(items: list[dict[str, Any]]) -> dict[str, Any]:
+            total_values = [int(row["usage"]["total_tokens"]) for row in items]
+            prompt_values = [int(row["usage"]["prompt_tokens"]) for row in items]
+
+            def values_stats(values: list[int]) -> dict[str, float | int | None]:
+                return {
+                    "mean": statistics.mean(values) if values else None,
+                    "median": statistics.median(values) if values else None,
+                    "min": min(values) if values else None,
+                    "max": max(values) if values else None,
+                }
+
+            return {
+                "total_tokens": values_stats(total_values),
+                "prompt_tokens": values_stats(prompt_values),
+                "model_calls": sum(int(row.get("model_call_count", 0)) for row in items),
+                "search_calls": sum(int(row.get("search_tool_result_calls", 0)) for row in items),
+                "get_calls": sum(int(row.get("get_tool_result_calls", 0)) for row in items),
+                "artifact_chars": sum(int(row.get("artifact_chars_returned_to_model", 0)) for row in items),
+                "overflow": sum(int(row.get("context_overflow_count", 0)) for row in items),
+                "retrieval_paths": dict(sorted(Counter(
+                    row.get("retrieval_path", "none") for row in items
+                ).items())),
+                "preview_chars": sorted({row.get("tool_summary_max_chars") for row in items}),
+            }
         case_rows.append({
             "case_id": case.id, "valid_repetitions": len(modes["baseline"]),
             "baseline_total_tokens": totals["baseline"], "context_management_total_tokens": totals["context_management"],
@@ -556,6 +595,8 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
             "context_management_safety_compliance": sum(row["quality"]["safety_compliance"] for row in modes["context_management"]),
             "baseline_strict_success": sum(row["quality"]["strict_success"] for row in modes["baseline"]),
             "context_management_strict_success": sum(row["quality"]["strict_success"] for row in modes["context_management"]),
+            "baseline_distribution": distribution(modes["baseline"]),
+            "context_management_distribution": distribution(modes["context_management"]),
         })
 
     def mode_stats(mode: str) -> dict[str, Any]:
@@ -644,6 +685,41 @@ def render_markdown(summary: dict[str, Any]) -> str:
         reduction = "N/A" if row["reduction_percent"] is None else f"{row['reduction_percent']:.2f}%"
         denominator = row["valid_repetitions"]
         lines.append(f"|{row['case_id']}|{row['baseline_total_tokens']}|{row['context_management_total_tokens']}|{reduction}|{row['baseline_success']}/{denominator}|{row['context_management_success']}/{denominator}|")
+    if "tool_summary_max_chars" in summary:
+        lines += [
+            "",
+            f"Preview configuration: {summary['tool_summary_max_chars']} chars; "
+            f"search snippet cap: {summary['artifact_search_total_snippet_chars']} chars.",
+            "",
+            "|Case / Mode|Total mean|Median|Min–max|Prompt mean|Model calls|Search / Get|Task / Safety / Strict|Overflow|Retrieval paths|",
+            "|---|--:|--:|--:|--:|--:|--:|--:|--:|---|",
+        ]
+        for row in summary["cases"]:
+            for mode, label, prefix in (
+                ("baseline", "Baseline", "baseline"),
+                ("context_management", "Context Management", "context_management"),
+            ):
+                data = row[f"{prefix}_distribution"]
+                total = data["total_tokens"]
+                prompt = data["prompt_tokens"]
+                denominator = row["valid_repetitions"]
+                task = row[f"{prefix}_success"]
+                safety = row[f"{prefix}_safety_compliance"]
+                strict = row[f"{prefix}_strict_success"]
+                total_mean = "N/A" if total["mean"] is None else f"{total['mean']:.1f}"
+                total_median = "N/A" if total["median"] is None else f"{total['median']:.1f}"
+                total_range = (
+                    "N/A" if total["min"] is None
+                    else f"{total['min']}–{total['max']}"
+                )
+                prompt_mean = "N/A" if prompt["mean"] is None else f"{prompt['mean']:.1f}"
+                lines.append(
+                    f"|{row['case_id']} / {label}|{total_mean}|{total_median}|"
+                    f"{total_range}|{prompt_mean}|{data['model_calls']}|"
+                    f"{data['search_calls']} / {data['get_calls']}|"
+                    f"{task}/{denominator} / {safety}/{denominator} / {strict}/{denominator}|"
+                    f"{data['overflow']}|{json.dumps(data['retrieval_paths'], sort_keys=True)}|"
+                )
     base, new, metrics = summary["modes"]["baseline"], summary["modes"]["context_management"], summary["metrics"]
     lines += ["", "## Overall", ""]
     reduction = metrics["overall_total_token_reduction_percent"]
@@ -795,7 +871,21 @@ def _optimization_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 async def run(args: argparse.Namespace) -> int:
     config = load_config()
     configured = _make_provider(config)
-    settings = {"provider": config.get_provider_name(config.agents.defaults.model), "model": configured.get_default_model(), "max_iterations": 12}
+    defaults = config.agents.defaults.context_management
+    settings = {
+        "provider": config.get_provider_name(config.agents.defaults.model),
+        "model": configured.get_default_model(),
+        "max_iterations": 12,
+        "tool_summary_max_chars": (
+            args.tool_summary_max_chars
+            if args.tool_summary_max_chars is not None else defaults.tool_summary_max_chars
+        ),
+        "artifact_search_total_snippet_chars": (
+            args.artifact_search_total_snippet_chars
+            if args.artifact_search_total_snippet_chars is not None
+            else defaults.artifact_search_total_snippet_chars
+        ),
+    }
     run_id = args.run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-ab-{args.suite}-{uuid.uuid4().hex[:8]}"
     output = Path(args.output or RESULTS_ROOT / run_id)
     output.mkdir(parents=True, exist_ok=args.resume)
@@ -822,6 +912,8 @@ async def run(args: argparse.Namespace) -> int:
                             "schema_version": "litebot-context-ab-result/v1", "case_id": case.id, "suite": case.suite,
                             "mode": mode, "repetition": repetition, "order": order, "provider": settings["provider"], "model": settings["model"],
                             "temperature": 0, "max_tokens": 8192, "context_window_tokens": 16_384, "max_iterations": settings["max_iterations"],
+                            "tool_summary_max_chars": settings["tool_summary_max_chars"],
+                            "artifact_search_total_snippet_chars": settings["artifact_search_total_snippet_chars"],
                             "usage": dict(EMPTY_USAGE), "usage_complete": False, "error": f"{type(exc).__name__}: {exc}",
                             "request_signatures": [], "control_tool_events": [], "tool_events": [], "quality": {"task_success": False},
                         }
@@ -835,6 +927,8 @@ async def run(args: argparse.Namespace) -> int:
     summary["run_id"] = run_id
     summary["provider"] = settings["provider"]
     summary["model"] = settings["model"]
+    summary["tool_summary_max_chars"] = settings["tool_summary_max_chars"]
+    summary["artifact_search_total_snippet_chars"] = settings["artifact_search_total_snippet_chars"]
     before_path = Path(args.before_results) if args.before_results else (
         RESULTS_ROOT / "ab-large-tool-result-final-v3" / "results.jsonl"
         if args.suite == "large-tool-result" else None
@@ -864,6 +958,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--run-id")
     result.add_argument("--resume", action="store_true")
     result.add_argument("--before-results", help="Optional prior results.jsonl for optimization comparison")
+    result.add_argument(
+        "--tool-summary-max-chars", type=int,
+        help="Explicit offloaded Tool Result preview size in characters",
+    )
+    result.add_argument(
+        "--artifact-search-total-snippet-chars", type=int,
+        help="Maximum total snippet characters returned by one artifact search",
+    )
     return result
 
 
@@ -871,6 +973,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.repetitions <= 0:
         parser().error("--repetitions must be positive")
+    if args.tool_summary_max_chars is not None and args.tool_summary_max_chars <= 0:
+        parser().error("--tool-summary-max-chars must be positive")
+    if (
+        args.artifact_search_total_snippet_chars is not None
+        and args.artifact_search_total_snippet_chars <= 0
+    ):
+        parser().error("--artifact-search-total-snippet-chars must be positive")
     return asyncio.run(run(args))
 
 
