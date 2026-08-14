@@ -37,6 +37,8 @@ def test_context_mode_uses_summary_view(tmp_path):
     assert [item["content"] for item in history] == ["recent"]
     assert summary == "summary"
     assert loop._context_management_enabled is True
+    assert loop.tools.get("get_tool_result") is not None
+    assert loop.tools.get("search_tool_result") is not None
 
 
 def test_baseline_restores_legacy_tool_result_truncation(tmp_path):

@@ -89,7 +89,13 @@ def test_validate_tool_structure_rejects_partial_parallel_group(tmp_path):
 def test_policy_environment_override(monkeypatch):
     monkeypatch.setenv("NANOBOT_CONTEXT_RECENT_TURNS", "12")
     monkeypatch.setenv("NANOBOT_CONTEXT_TOOL_OFFLOAD_THRESHOLD_BYTES", "99")
+    monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_SEARCHES_PER_SESSION", "4")
+    monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_READS_PER_SESSION", "2")
+    monkeypatch.setenv("NANOBOT_CONTEXT_ARTIFACT_MAX_RETURNED_CHARS_PER_SESSION", "8192")
     policy = ContextManagementPolicy.from_config(ContextManagementConfig(), 2048)
     assert policy.recent_turns == 12
     assert policy.tool_offload_threshold_bytes == 99
+    assert policy.artifact_max_searches_per_session == 4
+    assert policy.artifact_max_reads_per_session == 2
+    assert policy.artifact_max_returned_chars_per_session == 8192
     assert policy.output_reserve_tokens == 2048

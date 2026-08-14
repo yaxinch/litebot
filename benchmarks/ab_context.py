@@ -19,7 +19,11 @@ from typing import Any, Literal
 from benchmarks.collector import BenchmarkCollector, RecordingProvider, RecordingTool, add_usage
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.tool_result import GetToolResultTool
+from nanobot.agent.tools.tool_result import (
+    ArtifactRetrievalGuard,
+    GetToolResultTool,
+    SearchToolResultTool,
+)
 from nanobot.bus.queue import MessageBus
 from nanobot.cli.commands import _make_provider
 from nanobot.config.loader import load_config
@@ -131,7 +135,10 @@ def fixture_payload(kind: str) -> str:
 
 def _quality(case: ABCase, mode: Mode, output: str, tool_events: list[dict[str, Any]]) -> dict[str, Any]:
     positions = [output.find(marker) for marker in case.required]
-    retrieval_events = [event for event in tool_events if event["name"] == "get_tool_result" and event.get("status") == "ok"]
+    retrieval_events = [
+        event for event in tool_events
+        if event["name"] == "get_tool_result" and event.get("status") == "ok"
+    ]
     retrieval_ok = (
         not case.requires_retrieval
         or mode == "baseline"
@@ -192,7 +199,18 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             context_management_config=ContextManagementConfig(output_reserve_tokens=2048),
         )
         registry = ToolRegistry()
-        registry.register(RecordingTool(GetToolResultTool(loop.artifacts, loop.context_policy.artifact_page_size), collector))
+        retrieval_guard = ArtifactRetrievalGuard(
+            max_reads=loop.context_policy.artifact_max_reads_per_session,
+            max_searches=loop.context_policy.artifact_max_searches_per_session,
+            max_returned_chars=loop.context_policy.artifact_max_returned_chars_per_session,
+            max_sequential_reads=loop.context_policy.artifact_max_sequential_reads,
+        )
+        registry.register(RecordingTool(GetToolResultTool(
+            loop.artifacts, loop.context_policy.artifact_page_size, retrieval_guard,
+        ), collector))
+        registry.register(RecordingTool(SearchToolResultTool(
+            loop.artifacts, retrieval_guard,
+        ), collector))
         loop.tools = registry
         _seed_session(sessions, loop, collector, case, key)
         outputs: list[str] = []
@@ -210,7 +228,7 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             if item.get("phase") == "rolling_summary":
                 summary_usage = add_usage(summary_usage, item["usage"])
         context_events = list(loop.context_manager.telemetry)
-        control_tools = [event for event in collector.tool_events if event["name"] != "get_tool_result"]
+        control_tools = [event for event in collector.tool_events if event["name"] not in {"get_tool_result", "search_tool_result"}]
         overflow_count = sum("context_overflow" in event.get("actions", []) for event in context_events)
         overflow_count += sum(item.get("finish_reason") == "error" and "context" in str(outputs).lower() for item in collector.rounds)
         request_signatures = sorted({
@@ -230,7 +248,16 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             "hard_truncated_turns": sum(int(event.get("hard_truncated_turns", 0)) for event in context_events),
             "rolling_summary_usage": summary_usage, "context_overflow_count": overflow_count,
             "offloaded_artifacts": loop.context_manager.total_offloaded_artifacts,
-            "artifact_retrieval_count": sum(event["name"] == "get_tool_result" for event in collector.tool_events),
+            "artifact_retrieval_count": sum(event["name"] in {"get_tool_result", "search_tool_result"} for event in collector.tool_events),
+            "get_tool_result_calls": sum(event["name"] == "get_tool_result" for event in collector.tool_events),
+            "search_tool_result_calls": sum(event["name"] == "search_tool_result" for event in collector.tool_events),
+            "artifact_chars_returned_to_model": sum(
+                int(event.get("returned_artifact_chars", 0)) for event in collector.tool_events
+            ),
+            "artifact_context_chars_across_model_calls": sum(
+                int(item.get("request", {}).get("artifact_retrieval_chars", 0))
+                for item in collector.rounds
+            ),
             "quality": _quality(case, mode, output, collector.tool_events), "output": output,
             "request_signatures": [list(item) for item in request_signatures],
             "control_tool_events": control_tools, "tool_events": collector.tool_events,
@@ -307,6 +334,10 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
             "context_overflow_count": sum(row["context_overflow_count"] for row in selected),
             "offloaded_artifacts": sum(row["offloaded_artifacts"] for row in selected),
             "artifact_retrieval_count": sum(row["artifact_retrieval_count"] for row in selected),
+            "get_tool_result_calls": sum(row.get("get_tool_result_calls", row["artifact_retrieval_count"]) for row in selected),
+            "search_tool_result_calls": sum(row.get("search_tool_result_calls", 0) for row in selected),
+            "artifact_chars_returned_to_model": sum(row.get("artifact_chars_returned_to_model", 0) for row in selected),
+            "artifact_context_chars_across_model_calls": sum(row.get("artifact_context_chars_across_model_calls", 0) for row in selected),
             "quality_rates": {key: (sum(row["quality"][key] for row in selected) / len(selected) * 100 if selected else None) for key in quality_keys},
             "hallucination_rate": (sum(row["quality"]["hallucination_detected"] for row in selected) / len(selected) * 100 if selected else None),
         }
@@ -338,6 +369,19 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"|{row['case_id']}|{row['baseline_total_tokens']}|{row['context_management_total_tokens']}|{reduction}|{row['baseline_success']}/{denominator}|{row['context_management_success']}/{denominator}|")
     base, new, metrics = summary["modes"]["baseline"], summary["modes"]["context_management"], summary["metrics"]
     lines += ["", "## Overall", ""]
+    if comparison := summary.get("optimization_comparison"):
+        before, after = comparison["before"], comparison["after"]
+        lines += [
+            "|Metric|Before optimization|After optimization|",
+            "|---|--:|--:|",
+            f"|total tokens|{before['total_tokens']}|{after['total_tokens']}|",
+            f"|get_tool_result calls|{before['get_tool_result_calls']}|{after['get_tool_result_calls']}|",
+            f"|search_tool_result calls|{before['search_tool_result_calls']}|{after['search_tool_result_calls']}|",
+            f"|artifact chars returned to model|{before['artifact_chars_returned_to_model']}|{after['artifact_chars_returned_to_model']}|",
+            f"|success rate|{before['success_rate']:.2f}%|{after['success_rate']:.2f}%|",
+            f"|overflow count|{before['overflow_count']}|{after['overflow_count']}|",
+            "",
+        ]
     fields = [
         ("Baseline cumulative prompt tokens", base["usage"]["prompt_tokens"]), ("New cumulative prompt tokens", new["usage"]["prompt_tokens"]),
         ("Prompt token reduction %", metrics["prompt_token_reduction_percent"]), ("Baseline cumulative total tokens", base["usage"]["total_tokens"]),
@@ -356,6 +400,10 @@ def render_markdown(summary: dict[str, Any]) -> str:
         ("Baseline/New hallucination rate", f"{base['hallucination_rate']:.2f}% / {new['hallucination_rate']:.2f}%"),
         ("Baseline/New offloaded artifacts", f"{base['offloaded_artifacts']} / {new['offloaded_artifacts']}"),
         ("Baseline/New artifact retrieval calls", f"{base['artifact_retrieval_count']} / {new['artifact_retrieval_count']}"),
+        ("Baseline/New get_tool_result calls", f"{base['get_tool_result_calls']} / {new['get_tool_result_calls']}"),
+        ("Baseline/New search_tool_result calls", f"{base['search_tool_result_calls']} / {new['search_tool_result_calls']}"),
+        ("Baseline/New artifact chars returned to model", f"{base['artifact_chars_returned_to_model']} / {new['artifact_chars_returned_to_model']}"),
+        ("Baseline/New artifact chars carried across model prompts", f"{base['artifact_context_chars_across_model_calls']} / {new['artifact_context_chars_across_model_calls']}"),
     ]
     for label, value in fields:
         rendered = f"{value:.2f}%" if isinstance(value, float) else ("N/A" if value is None else str(value))
@@ -370,6 +418,45 @@ def render_markdown(summary: dict[str, Any]) -> str:
     else:
         lines += ["", "无法生成总体结论：存在不完整配对、usage 缺失或控制变量违规。", "", "```json", json.dumps(summary["issues"], ensure_ascii=False, indent=2), "```"]
     return "\n".join(lines) + "\n"
+
+
+def _artifact_chars_for_row(row: dict[str, Any]) -> int:
+    """Read the new telemetry, or derive legacy fixed-fixture page sizes."""
+    if "artifact_chars_returned_to_model" in row:
+        return int(row["artifact_chars_returned_to_model"])
+    case = next((item for item in cases_for(row["suite"]) if item.id == row["case_id"]), None)
+    total_chars = len(fixture_payload(case.fixture_kind)) if case and case.fixture_kind else 0
+    returned = 0
+    for event in row.get("tool_events", []):
+        if event.get("name") != "get_tool_result" or event.get("status") != "ok":
+            continue
+        arguments = event.get("arguments", {})
+        try:
+            offset = int(arguments.get("offset", 0))
+            limit = int(arguments.get("limit", 4096))
+        except (TypeError, ValueError):
+            continue
+        returned += max(0, min(limit, total_chars - offset))
+    return returned
+
+
+def _optimization_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    selected = [
+        row for row in rows
+        if row.get("mode") == "context_management" and row.get("usage_complete")
+    ]
+    tool_events = [event for row in selected for event in row.get("tool_events", [])]
+    return {
+        "total_tokens": sum(int(row["usage"]["total_tokens"]) for row in selected),
+        "get_tool_result_calls": sum(event.get("name") == "get_tool_result" for event in tool_events),
+        "search_tool_result_calls": sum(event.get("name") == "search_tool_result" for event in tool_events),
+        "artifact_chars_returned_to_model": sum(_artifact_chars_for_row(row) for row in selected),
+        "success_rate": (
+            sum(bool(row.get("quality", {}).get("task_success")) for row in selected)
+            / len(selected) * 100 if selected else 0.0
+        ),
+        "overflow_count": sum(int(row.get("context_overflow_count", 0)) for row in selected),
+    }
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -412,6 +499,20 @@ async def run(args: argparse.Namespace) -> int:
     summary["run_id"] = run_id
     summary["provider"] = settings["provider"]
     summary["model"] = settings["model"]
+    before_path = Path(args.before_results) if args.before_results else (
+        RESULTS_ROOT / "ab-large-tool-result-final-v3" / "results.jsonl"
+        if args.suite == "large-tool-result" else None
+    )
+    if before_path and before_path.is_file():
+        before_rows = [
+            json.loads(line) for line in before_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        summary["optimization_comparison"] = {
+            "before_results": str(before_path),
+            "before": _optimization_stats(before_rows),
+            "after": _optimization_stats(rows),
+        }
     (output / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (output / "report.md").write_text(render_markdown(summary), encoding="utf-8")
     print(render_markdown(summary))
@@ -426,6 +527,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output")
     result.add_argument("--run-id")
     result.add_argument("--resume", action="store_true")
+    result.add_argument("--before-results", help="Optional prior results.jsonl for optimization comparison")
     return result
 
 

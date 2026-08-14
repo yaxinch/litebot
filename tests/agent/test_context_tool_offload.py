@@ -21,7 +21,12 @@ def test_large_tool_result_is_offloaded_and_original_is_recoverable(tmp_path):
     assert manager.offload_tool_results(messages, "cli:one") == 1
     placeholder = messages[0]["content"]
     artifact_id = placeholder.split("artifact_id: ", 1)[1].splitlines()[0]
-    assert "artifact_path: sessions/artifacts/cli_one/" in placeholder
+    assert "content_type: text/plain" in placeholder
+    assert "original_size_bytes: 11" in placeholder
+    assert "line_count: 1" in placeholder
+    assert "search_tool_result" in placeholder
+    assert "get_tool_result" in placeholder
+    assert "artifact_path" not in placeholder
     assert store.get("cli:one", artifact_id, 0, 100)["content"] == "abcdefghijk"
 
 

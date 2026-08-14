@@ -12,6 +12,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.providers.base import LLMProvider, LLMResponse
 
 SECRET_KEYS = re.compile(r"api[_-]?key|token|authorization|password|secret", re.I)
+RETRIEVAL_TOOLS = {"get_tool_result", "search_tool_result"}
 
 
 def redact(value: Any, limit: int = 500) -> Any:
@@ -33,6 +34,23 @@ def normalize_usage(usage: dict[str, Any] | None) -> dict[str, int]:
 
 def add_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
     return {key: int(left.get(key, 0)) + int(right.get(key, 0)) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+
+
+def retrieval_chars(result: Any) -> int:
+    """Count only artifact text delivered by a retrieval response."""
+    try:
+        parsed = json.loads(result) if isinstance(result, str) else result
+    except (TypeError, json.JSONDecodeError):
+        return 0
+    if not isinstance(parsed, dict):
+        return 0
+    if isinstance(parsed.get("content"), str):
+        return len(parsed["content"])
+    return sum(
+        len(match.get("snippet", ""))
+        for match in parsed.get("matches", [])
+        if isinstance(match, dict) and isinstance(match.get("snippet", ""), str)
+    )
 
 
 @dataclass
@@ -102,6 +120,10 @@ class RecordingProvider(LLMProvider):
         if messages and str(messages[0].get("content", "")).startswith("You compact session context"):
             phase = "rolling_summary"
         tools = request.get("tools") or []
+        retrieval_messages = [
+            message for message in messages if message.get("role") == "tool"
+            and message.get("name") in RETRIEVAL_TOOLS
+        ]
         self.collector.rounds.append({
             "index": len(self.collector.rounds),
             "phase": phase,
@@ -115,6 +137,10 @@ class RecordingProvider(LLMProvider):
                 "temperature": request.get("temperature", self.generation.temperature),
                 "max_tokens": request.get("max_tokens", self.generation.max_tokens),
                 "tool_schema_sha256": hashlib.sha256(json.dumps(tools, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+                "artifact_retrieval_chars": sum(
+                    retrieval_chars(message.get("content")) for message in retrieval_messages
+                ),
+                "artifact_retrieval_messages": len(retrieval_messages),
             },
         })
 
@@ -167,6 +193,22 @@ class RecordingTool(Tool):
                 result_sha256=hashlib.sha256(serialized.encode()).hexdigest(),
                 result_size_bytes=len(serialized.encode()),
             )
+            if self.name in RETRIEVAL_TOOLS:
+                event["retrieval_kind"] = "page" if self.name == "get_tool_result" else "search"
+                event["artifact_id"] = kwargs.get("artifact_id")
+                event["returned_artifact_chars"] = retrieval_chars(result)
+                event["guard_decision"] = "blocked" if (
+                    isinstance(result, str) and "retrieval guard blocked" in result
+                ) else "allowed"
+                try:
+                    parsed = json.loads(result) if isinstance(result, str) else result
+                except (TypeError, json.JSONDecodeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    event["match_offsets"] = [
+                        match.get("offset") for match in parsed.get("matches", [])
+                        if isinstance(match, dict)
+                    ]
             return result
         finally:
             event["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)

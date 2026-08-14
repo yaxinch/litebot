@@ -1684,7 +1684,8 @@ nanobot/
 
 ## Known limitations
 
-- Offloaded tool artifacts are paged by decoded text character offset, not raw byte offset. This suits the current UTF-8 text/JSON results but is not a general binary artifact API.
+- Offloaded UTF-8 text/JSON artifacts can be located with `search_tool_result` and read locally with `get_tool_result`. Match and page positions are decoded character offsets, not raw byte offsets; this is not a binary artifact API.
+- Artifact retrieval is guarded per session and artifact. Defaults allow five searches, three page reads, and 12,288 total returned characters; successful search hits reset the local-read count. These limits are configurable under `agents.defaults.contextManagement`.
 - If the protected system prompt plus the current user message alone exceed the effective context budget, LiteBot returns a context-overflow error instead of lossily truncating protected input.
 
 ## 🤝 Contribute & Roadmap

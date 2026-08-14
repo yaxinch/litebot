@@ -27,6 +27,7 @@ class ToolArtifact:
     content_type: str
     encoding: str
     size_bytes: int
+    line_count: int | None
     sha256: str
     created_at: str
     relative_path: str
@@ -79,6 +80,7 @@ class ToolArtifactStore:
             content_type=content_type,
             encoding="utf-8",
             size_bytes=len(payload),
+            line_count=payload.decode("utf-8").count("\n") + (1 if payload else 0),
             sha256=hashlib.sha256(payload).hexdigest(),
             created_at=datetime.now().isoformat(),
             relative_path=data_path.relative_to(self.workspace).as_posix(),
@@ -94,11 +96,9 @@ class ToolArtifactStore:
             raise
         return artifact
 
-    def get(self, session_key: str, artifact_id: str, offset: int, limit: int) -> dict[str, Any]:
+    def _load_text(self, session_key: str, artifact_id: str) -> tuple[str, dict[str, Any]]:
         if not _ARTIFACT_ID.fullmatch(artifact_id):
             raise ValueError("invalid artifact_id")
-        if offset < 0 or limit <= 0:
-            raise ValueError("offset must be >= 0 and limit must be > 0")
         directory = self._session_dir(session_key, create=False)
         meta_path = directory / f"{artifact_id}.json"
         data_path = directory / f"{artifact_id}.data"
@@ -110,7 +110,22 @@ class ToolArtifactStore:
         payload = data_path.read_bytes()
         if hashlib.sha256(payload).hexdigest() != metadata.get("sha256"):
             raise ValueError("artifact checksum mismatch")
-        text = payload.decode(metadata.get("encoding", "utf-8"))
+        encoding = str(metadata.get("encoding", "utf-8"))
+        content_type = str(metadata.get("content_type", "text/plain"))
+        if encoding.lower().replace("_", "-") != "utf-8" or not (
+            content_type.startswith("text/") or content_type == "application/json"
+        ):
+            raise ValueError("artifact is not supported UTF-8 text")
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("artifact is not valid UTF-8 text") from exc
+        return text, metadata
+
+    def get(self, session_key: str, artifact_id: str, offset: int, limit: int) -> dict[str, Any]:
+        if offset < 0 or limit <= 0:
+            raise ValueError("offset must be >= 0 and limit must be > 0")
+        text, metadata = self._load_text(session_key, artifact_id)
         if offset > len(text):
             raise ValueError("offset exceeds artifact length")
         end = min(len(text), offset + limit)
@@ -122,6 +137,51 @@ class ToolArtifactStore:
             "total_chars": len(text),
             "has_more": end < len(text),
             "content_type": metadata.get("content_type", "text/plain"),
+        }
+
+    def search(
+        self, session_key: str, artifact_id: str, query: str,
+        max_matches: int = 5, context_chars: int = 500,
+    ) -> dict[str, Any]:
+        """Search a session-owned UTF-8 text artifact without returning the full value."""
+        if not query:
+            raise ValueError("query must not be empty")
+        if len(query) > 256:
+            raise ValueError("query exceeds 256 characters")
+        if not 1 <= max_matches <= 5:
+            raise ValueError("max_matches must be between 1 and 5")
+        if not 0 <= context_chars <= 500:
+            raise ValueError("context_chars must be between 0 and 500")
+        text, metadata = self._load_text(session_key, artifact_id)
+        positions: list[int] = []
+        cursor = 0
+        while len(positions) <= max_matches:
+            found = text.find(query, cursor)
+            if found < 0:
+                break
+            positions.append(found)
+            cursor = found + max(1, len(query))
+        truncated = len(positions) > max_matches
+        matches = []
+        for offset in positions[:max_matches]:
+            end = offset + len(query)
+            snippet_start = max(0, offset - context_chars)
+            snippet_end = min(len(text), end + context_chars)
+            matches.append({
+                "offset": offset,
+                "end": end,
+                "snippet_start": snippet_start,
+                "snippet_end": snippet_end,
+                "snippet": text[snippet_start:snippet_end],
+            })
+        return {
+            "status": "matches" if matches else "no_match",
+            "artifact_id": artifact_id,
+            "query": query,
+            "content_type": metadata.get("content_type", "text/plain"),
+            "total_chars": len(text),
+            "matches": matches,
+            "has_more_matches": truncated,
         }
 
     def collect_garbage(

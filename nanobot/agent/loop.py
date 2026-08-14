@@ -29,7 +29,11 @@ from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.tool_result import GetToolResultTool
+from nanobot.agent.tools.tool_result import (
+    ArtifactRetrievalGuard,
+    GetToolResultTool,
+    SearchToolResultTool,
+)
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
@@ -171,9 +175,17 @@ class AgentLoop:
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
+        retrieval_guard = ArtifactRetrievalGuard(
+            max_reads=self.context_policy.artifact_max_reads_per_session,
+            max_searches=self.context_policy.artifact_max_searches_per_session,
+            max_returned_chars=self.context_policy.artifact_max_returned_chars_per_session,
+            max_sequential_reads=self.context_policy.artifact_max_sequential_reads,
+        )
         self.tools.register(GetToolResultTool(
             self.artifacts, default_page_size=self.context_policy.artifact_page_size,
+            guard=retrieval_guard,
         ))
+        self.tools.register(SearchToolResultTool(self.artifacts, retrieval_guard))
         if self.cron_service:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
@@ -209,8 +221,10 @@ class AgentLoop:
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
 
     def _set_artifact_context(self, session_key: str | None) -> None:
-        if session_key and (tool := self.tools.get("get_tool_result")):
-            if hasattr(tool, "set_context"):
+        if not session_key:
+            return
+        for name in ("get_tool_result", "search_tool_result"):
+            if (tool := self.tools.get(name)) and hasattr(tool, "set_context"):
                 tool.set_context(session_key)
 
     def _maybe_collect_artifacts(self) -> None:

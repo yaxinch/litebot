@@ -55,6 +55,12 @@ secret-like fields are redacted. Provider usage is accumulated per LLM call,
 not taken from `AgentRunResult.usage`, which only represents its last response
 in this nanobot version.
 
+The context A/B trace separately records `get_tool_result` and
+`search_tool_result` calls, artifact characters returned by those tools, and
+artifact-retrieval characters carried into each later model prompt. Provider
+token usage remains attributed to the main agent; retrieval tools do not make
+independent LLM calls.
+
 Comparison treats `PASSED -> FAILED` as a correctness regression. Metrics are
 reported but do not have hard thresholds. `PASSED -> SKIPPED` is a coverage
 warning rather than a correctness failure.

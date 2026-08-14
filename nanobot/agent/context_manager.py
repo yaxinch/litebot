@@ -29,6 +29,10 @@ class ContextManagementPolicy:
     tool_offload_threshold_bytes: int = 8192
     tool_summary_max_chars: int = 1000
     artifact_page_size: int = 4096
+    artifact_max_reads_per_session: int = 3
+    artifact_max_searches_per_session: int = 5
+    artifact_max_returned_chars_per_session: int = 12_288
+    artifact_max_sequential_reads: int = 3
     artifact_ttl_days: int = 30
     artifact_gc_interval_seconds: int = 86400
     max_compaction_rounds: int = 5
@@ -52,6 +56,10 @@ class ContextManagementPolicy:
             "tool_offload_threshold_bytes": cfg.tool_offload_threshold_bytes,
             "tool_summary_max_chars": cfg.tool_summary_max_chars,
             "artifact_page_size": cfg.artifact_page_size,
+            "artifact_max_reads_per_session": cfg.artifact_max_reads_per_session,
+            "artifact_max_searches_per_session": cfg.artifact_max_searches_per_session,
+            "artifact_max_returned_chars_per_session": cfg.artifact_max_returned_chars_per_session,
+            "artifact_max_sequential_reads": cfg.artifact_max_sequential_reads,
             "artifact_ttl_days": cfg.artifact_ttl_days,
             "artifact_gc_interval_seconds": cfg.artifact_gc_interval_seconds,
             "max_compaction_rounds": cfg.max_compaction_rounds,
@@ -61,6 +69,10 @@ class ContextManagementPolicy:
             "compaction_target": float, "safety_margin_tokens": int,
             "output_reserve_tokens": int, "tool_offload_threshold_bytes": int,
             "tool_summary_max_chars": int, "artifact_page_size": int,
+            "artifact_max_reads_per_session": int,
+            "artifact_max_searches_per_session": int,
+            "artifact_max_returned_chars_per_session": int,
+            "artifact_max_sequential_reads": int,
             "artifact_ttl_days": int, "artifact_gc_interval_seconds": int,
             "max_compaction_rounds": int,
         }
@@ -124,14 +136,21 @@ class ContextManager:
                     session_key, str(message.get("name", "tool")),
                     str(message.get("tool_call_id", "")), message.get("content"),
                 )
-                preview = payload.decode("utf-8", errors="replace")[:self.policy.tool_summary_max_chars]
+                text = payload.decode("utf-8", errors="replace")
+                preview = text[:self.policy.tool_summary_max_chars]
                 message["content"] = (
                     "[Tool Result Offloaded]\n"
                     f"artifact_id: {artifact.artifact_id}\n"
-                    f"artifact_path: {artifact.relative_path}\n"
-                    f"tool: {artifact.tool_name}\nsize_bytes: {artifact.size_bytes}\n"
+                    f"content_type: {artifact.content_type}\n"
+                    f"original_size_bytes: {artifact.size_bytes}\n"
+                    f"line_count: {artifact.line_count}\n"
+                    f"tool: {artifact.tool_name}\n"
                     f"sha256: {artifact.sha256}\nsummary: {preview}\n"
-                    f'retrieve: get_tool_result(artifact_id="{artifact.artifact_id}", offset=0, limit={self.policy.artifact_page_size})'
+                    "retrieval: Unknown location -> search_tool_result(artifact_id, query). "
+                    "For an unknown standalone identifier/marker, search for a likely literal such as "
+                    "RESULT or for the newline character to inspect bounded line boundaries. "
+                    "Known location or more local context -> "
+                    f'get_tool_result(artifact_id="{artifact.artifact_id}", offset=<known_offset>, limit<={self.policy.artifact_page_size}).'
                 )
                 count += 1
             except Exception as exc:
