@@ -7,10 +7,12 @@ import asyncio
 import hashlib
 import json
 import math
+import re
 import statistics
 import tempfile
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Any, Literal
 
 from benchmarks.collector import BenchmarkCollector, RecordingProvider, RecordingTool, add_usage
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.tool_result import (
     ArtifactRetrievalGuard,
@@ -36,6 +39,14 @@ RESULTS_ROOT = ROOT / "benchmark_results"
 Mode = Literal["baseline", "context_management"]
 SUITES = ("long-context", "large-tool-result")
 EMPTY_USAGE = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+RETRIEVAL_TOOLS = {"get_tool_result", "search_tool_result"}
+ARTIFACT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
 
 
 def _filler(label: str, chars: int) -> str:
@@ -133,27 +144,246 @@ def fixture_payload(kind: str) -> str:
         return _filler("paged-prefix", 12000) + "\nPAGED-RESULT-771\n" + _filler("paged-tail", 50000)
 
 
-def _quality(case: ABCase, mode: Mode, output: str, tool_events: list[dict[str, Any]]) -> dict[str, Any]:
+def _retrieval_events(tool_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [event for event in tool_events if event.get("name") in RETRIEVAL_TOOLS]
+
+
+def _is_sequential_scan(events: list[dict[str, Any]]) -> bool:
+    pages = [
+        event for event in events
+        if event.get("name") == "get_tool_result" and event.get("status") == "ok"
+    ]
+    consecutive = 1
+    previous: tuple[str, int, int] | None = None
+    for event in pages:
+        arguments = event.get("arguments", {})
+        try:
+            current = (
+                str(event.get("artifact_id") or arguments.get("artifact_id", "")),
+                int(arguments.get("offset", 0)),
+                int(event.get("returned_artifact_chars", 0)),
+            )
+        except (TypeError, ValueError):
+            previous = None
+            consecutive = 1
+            continue
+        if previous and current[0] == previous[0] and current[1] == previous[1] + previous[2]:
+            consecutive += 1
+            if consecutive >= 3:
+                return True
+        else:
+            consecutive = 1
+        previous = current
+    return any(
+        event.get("guard_decision") == "blocked"
+        and "sequential" in str(event.get("detail", "")).lower()
+        for event in events
+    )
+
+
+def _retrieval_path(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return "none"
+    if _is_sequential_scan(events):
+        return "sequential_scan"
+    names = [event.get("name") for event in events]
+    has_search = "search_tool_result" in names
+    has_get = "get_tool_result" in names
+    if has_search and not has_get:
+        return "search_only"
+    if has_get and not has_search:
+        return "get_only"
+    first_search = names.index("search_tool_result")
+    if any(name == "get_tool_result" for name in names[first_search + 1:]):
+        return "search_then_get"
+    return "get_then_search"
+
+
+def _retrieval_diagnostics(row: dict[str, Any]) -> dict[str, Any]:
+    events = _retrieval_events(row.get("tool_events", []))
+    artifact_chars = _artifact_chars_for_row(row)
+    token_sources = {
+        str(event.get("retrieval_token_cost_source", "byte_heuristic"))
+        for event in events
+    }
+    token_cost = sum(
+        int(event.get("retrieval_token_cost_estimated") or (
+            (int(event.get("result_size_bytes", 0)) + 3) // 4
+        ))
+        for event in events
+    )
+    carried_tokens = sum(
+        int(item.get("request", {}).get("artifact_retrieval_tokens_estimated") or (
+            (int(item.get("request", {}).get("artifact_retrieval_chars", 0)) + 3) // 4
+        ))
+        for item in row.get("rounds", [])
+    )
+    retrieval_errors = sum(
+        event.get("status") in {"error_result", "exception"} for event in events
+    )
+    guard_triggers = sum(event.get("guard_decision") == "blocked" for event in events)
+    safety_violations = _retrieval_safety_violations(events)
+    return {
+        "retrieval_path": _retrieval_path(events),
+        "get_tool_result_calls": sum(event.get("name") == "get_tool_result" for event in events),
+        "search_tool_result_calls": sum(event.get("name") == "search_tool_result" for event in events),
+        "artifact_retrieval_count": len(events),
+        "artifact_chars_returned_to_model": artifact_chars,
+        "retrieval_token_cost_estimated": token_cost,
+        "retrieval_token_cost_source": (
+            next(iter(token_sources)) if len(token_sources) == 1 else "mixed"
+        ) if token_sources else "none",
+        "retrieval_prompt_tokens_carried_estimated": carried_tokens,
+        "retrieval_guard_trigger_count": guard_triggers,
+        "retrieval_error_count": retrieval_errors,
+        "safety_violations": dict(sorted(safety_violations.items())),
+        "invalid_artifact_call_count": sum(
+            safety_violations[kind]
+            for kind in ("invalid_artifact_id", "artifact_unavailable")
+        ),
+    }
+
+
+def _retrieval_safety_violations(events: list[dict[str, Any]]) -> Counter[str]:
+    """Classify explicit retrieval violations without conflating them with task quality."""
+    violations: Counter[str] = Counter()
+    for event in events:
+        detail = str(event.get("detail", "")).lower()
+        if event.get("guard_decision") == "blocked":
+            violations["retrieval_guard_violation"] += 1
+        elif "invalid artifact_id" in detail or "invalid artifact id" in detail:
+            violations["invalid_artifact_id"] += 1
+        elif "artifact unavailable" in detail or "artifact not found" in detail:
+            violations["artifact_unavailable"] += 1
+        elif "does not belong to this session" in detail or "isolation" in detail:
+            violations["artifact_isolation_violation"] += 1
+        elif "path" in detail and event.get("status") in {"error_result", "exception"}:
+            violations["path_safety_violation"] += 1
+        elif event.get("status") == "exception":
+            violations["retrieval_exception"] += 1
+        elif event.get("status") == "error_result":
+            violations["other_retrieval_error"] += 1
+    return violations
+
+
+def _quality(
+    case: ABCase, mode: Mode, output: str, tool_events: list[dict[str, Any]],
+    overflow_count: int = 0, finish_reason: str | None = None,
+) -> dict[str, Any]:
     positions = [output.find(marker) for marker in case.required]
-    retrieval_events = [
+    successful_gets = [
         event for event in tool_events
         if event["name"] == "get_tool_result" and event.get("status") == "ok"
     ]
-    retrieval_ok = (
+    protocol_match = (
         not case.requires_retrieval
         or mode == "baseline"
-        or (bool(retrieval_events) and all(marker in output for marker in case.fact_markers))
+        or bool(successful_gets)
     )
-    hallucination = any(marker in output for marker in case.forbidden) or any(pos < 0 for pos in positions)
     ordered = positions == sorted(positions) if case.id == "post_compaction_multistep" else True
+    marker_correct = all(pos >= 0 for pos in positions) and ordered
+    unexpected_markers: set[str] = set()
+    if case.suite == "large-tool-result":
+        observed = set(re.findall(r"\b(?:LARGE|PAGED)-RESULT-\d+\b", output))
+        unexpected_markers = observed.difference(case.required)
+    hallucination = bool(unexpected_markers) or any(marker in output for marker in case.forbidden)
+    lowered = output.strip().lower()
+    output_error = (
+        not lowered
+        or finish_reason == "error"
+        or lowered.startswith("error")
+        or "maximum number of tool call iterations" in lowered
+    )
+    retrieval_events = _retrieval_events(tool_events)
+    safety_violations = _retrieval_safety_violations(retrieval_events)
+    safety_compliance = not safety_violations
     result = {
+        "marker_correct": marker_correct,
+        "output_error_detected": output_error,
         "early_constraint_retention": all(marker in output for marker in case.early_markers),
         "key_fact_retention": all(marker in output for marker in case.fact_markers),
-        "tool_result_retrieval_correctness": retrieval_ok,
+        "safety_compliance": safety_compliance,
+        "retrieval_safety_ok": safety_compliance,
+        "safety_violations": dict(sorted(safety_violations.items())),
+        "invalid_artifact_call_count": sum(
+            safety_violations[kind]
+            for kind in ("invalid_artifact_id", "artifact_unavailable")
+        ),
+        "retrieval_protocol_match": protocol_match,
+        "tool_result_retrieval_correctness": protocol_match,
         "hallucination_detected": hallucination,
     }
-    result["task_success"] = all(marker in output for marker in case.required) and ordered and retrieval_ok and not hallucination
+    result["task_success"] = (
+        marker_correct and not output_error and not hallucination
+        and overflow_count == 0
+    )
+    result["strict_success"] = result["task_success"] and safety_compliance
     return result
+
+
+def _rescore_row(row: dict[str, Any], case: ABCase) -> dict[str, Any]:
+    if "output" not in row:
+        row.update(_retrieval_diagnostics(row))
+        quality = row.setdefault("quality", {})
+        safety = bool(quality.get(
+            "safety_compliance",
+            quality.get("retrieval_safety_ok", not row["safety_violations"]),
+        ))
+        quality["safety_compliance"] = safety
+        quality["retrieval_safety_ok"] = safety
+        quality["strict_success"] = bool(quality.get("task_success")) and safety
+        quality.setdefault("safety_violations", row["safety_violations"])
+        quality.setdefault("invalid_artifact_call_count", row["invalid_artifact_call_count"])
+        return row
+    finish_reason = next((
+        item.get("finish_reason") for item in reversed(row.get("rounds", []))
+        if item.get("phase", "agent") == "agent"
+    ), None)
+    row.update(_retrieval_diagnostics(row))
+    row["quality"] = _quality(
+        case, row["mode"], str(row.get("output", "")), row.get("tool_events", []),
+        int(row.get("context_overflow_count", 0)), finish_reason,
+    )
+    row["schema_version"] = "litebot-context-ab-result/v3"
+    row["quality_schema_version"] = "litebot-context-quality/v3"
+    return row
+
+
+def _rescore_rows(rows: list[dict[str, Any]], suite: str) -> list[dict[str, Any]]:
+    by_id = {case.id: case for case in cases_for(suite)}
+    return [
+        _rescore_row(row, by_id[row["case_id"]]) if row.get("case_id") in by_id else row
+        for row in rows
+    ]
+
+
+class _BaselineUnavailableRetrievalTool(Tool):
+    """Keep the candidate schema while preventing baseline artifact access."""
+
+    def __init__(self, inner: Tool):
+        self.inner = inner
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def description(self) -> str:
+        return self.inner.description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self.inner.parameters
+
+    def set_context(self, session_key: str) -> None:
+        # Baseline deliberately has no Context Management artifact namespace.
+        del session_key
+
+    async def execute(self, **kwargs: Any) -> str:
+        artifact_id = str(kwargs.get("artifact_id", ""))
+        if not ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
+            return "Error: invalid artifact id"
+        return "Error: artifact unavailable in baseline mode"
 
 
 def _seed_session(manager: SessionManager, loop: AgentLoop, collector: BenchmarkCollector, case: ABCase, key: str) -> None:
@@ -205,12 +435,15 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             max_returned_chars=loop.context_policy.artifact_max_returned_chars_per_session,
             max_sequential_reads=loop.context_policy.artifact_max_sequential_reads,
         )
-        registry.register(RecordingTool(GetToolResultTool(
+        get_tool: Tool = GetToolResultTool(
             loop.artifacts, loop.context_policy.artifact_page_size, retrieval_guard,
-        ), collector))
-        registry.register(RecordingTool(SearchToolResultTool(
-            loop.artifacts, retrieval_guard,
-        ), collector))
+        )
+        search_tool: Tool = SearchToolResultTool(loop.artifacts, retrieval_guard)
+        if mode == "baseline":
+            get_tool = _BaselineUnavailableRetrievalTool(get_tool)
+            search_tool = _BaselineUnavailableRetrievalTool(search_tool)
+        registry.register(RecordingTool(get_tool, collector))
+        registry.register(RecordingTool(search_tool, collector))
         loop.tools = registry
         _seed_session(sessions, loop, collector, case, key)
         outputs: list[str] = []
@@ -235,7 +468,7 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
             (item["request"]["model"], item["request"]["temperature"], item["request"]["max_tokens"], item["request"]["tool_schema_sha256"])
             for item in collector.rounds if item.get("phase") == "agent"
         })
-        return {
+        row = {
             "schema_version": "litebot-context-ab-result/v1", "case_id": case.id, "suite": case.suite,
             "mode": mode, "repetition": repetition, "order": order, "started_at": started_at,
             "duration_ms": round((time.perf_counter() - started) * 1000, 3),
@@ -258,11 +491,12 @@ async def run_once(case: ABCase, mode: Mode, repetition: int, order: int, settin
                 int(item.get("request", {}).get("artifact_retrieval_chars", 0))
                 for item in collector.rounds
             ),
-            "quality": _quality(case, mode, output, collector.tool_events), "output": output,
+            "output": output,
             "request_signatures": [list(item) for item in request_signatures],
             "control_tool_events": control_tools, "tool_events": collector.tool_events,
             "context_events": context_events, "rounds": collector.rounds,
         }
+        return _rescore_row(row, case)
 
 
 def _tool_signature(row: dict[str, Any]) -> list[tuple[str, str | None, str | None]]:
@@ -288,6 +522,7 @@ def validate_pair(baseline: dict[str, Any], candidate: dict[str, Any]) -> list[s
 
 
 def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[str, Any]:
+    rows = _rescore_rows(rows, suite)
     cases = cases_for(suite)
     by_pair: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
     for row in rows:
@@ -317,6 +552,10 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
             "reduction_percent": reduction,
             "baseline_success": sum(row["quality"]["task_success"] for row in modes["baseline"]),
             "context_management_success": sum(row["quality"]["task_success"] for row in modes["context_management"]),
+            "baseline_safety_compliance": sum(row["quality"]["safety_compliance"] for row in modes["baseline"]),
+            "context_management_safety_compliance": sum(row["quality"]["safety_compliance"] for row in modes["context_management"]),
+            "baseline_strict_success": sum(row["quality"]["strict_success"] for row in modes["baseline"]),
+            "context_management_strict_success": sum(row["quality"]["strict_success"] for row in modes["context_management"]),
         })
 
     def mode_stats(mode: str) -> dict[str, Any]:
@@ -326,7 +565,30 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
         for row in selected:
             usage = add_usage(usage, row["usage"])
             summary_usage = add_usage(summary_usage, row["rolling_summary_usage"])
-        quality_keys = ("task_success", "early_constraint_retention", "key_fact_retention", "tool_result_retrieval_correctness")
+        quality_keys = (
+            "task_success", "safety_compliance", "strict_success",
+            "marker_correct", "early_constraint_retention",
+            "key_fact_retention", "retrieval_safety_ok", "retrieval_protocol_match",
+            "tool_result_retrieval_correctness",
+        )
+
+        def quality_value(row: dict[str, Any], key: str) -> bool:
+            quality = row["quality"]
+            if key in quality:
+                return bool(quality[key])
+            if key == "retrieval_protocol_match":
+                return bool(quality.get("tool_result_retrieval_correctness"))
+            return bool(quality.get("task_success"))
+
+        path_distribution = Counter(
+            row.get("retrieval_path", "none") for row in selected
+        )
+        token_sources = Counter(
+            row.get("retrieval_token_cost_source", "none") for row in selected
+        )
+        safety_violations: Counter[str] = Counter()
+        for row in selected:
+            safety_violations.update(row.get("safety_violations", {}))
         return {
             "runs": len(selected), "usage": usage, "peak_prompt_tokens": max((row["peak_prompt_tokens"] for row in selected), default=0),
             "model_call_count": sum(row["model_call_count"] for row in selected),
@@ -338,7 +600,22 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
             "search_tool_result_calls": sum(row.get("search_tool_result_calls", 0) for row in selected),
             "artifact_chars_returned_to_model": sum(row.get("artifact_chars_returned_to_model", 0) for row in selected),
             "artifact_context_chars_across_model_calls": sum(row.get("artifact_context_chars_across_model_calls", 0) for row in selected),
-            "quality_rates": {key: (sum(row["quality"][key] for row in selected) / len(selected) * 100 if selected else None) for key in quality_keys},
+            "retrieval_path_distribution": dict(sorted(path_distribution.items())),
+            "retrieval_token_cost_estimated": sum(row.get("retrieval_token_cost_estimated", 0) for row in selected),
+            "retrieval_token_cost_sources": dict(sorted(token_sources.items())),
+            "retrieval_prompt_tokens_carried_estimated": sum(
+                row.get("retrieval_prompt_tokens_carried_estimated", 0) for row in selected
+            ),
+            "retrieval_guard_trigger_count": sum(row.get("retrieval_guard_trigger_count", 0) for row in selected),
+            "retrieval_error_count": sum(row.get("retrieval_error_count", 0) for row in selected),
+            "safety_violations": dict(sorted(safety_violations.items())),
+            "invalid_artifact_call_count": sum(
+                int(row.get("invalid_artifact_call_count", 0)) for row in selected
+            ),
+            "quality_rates": {
+                key: (sum(quality_value(row, key) for row in selected) / len(selected) * 100 if selected else None)
+                for key in quality_keys
+            },
             "hallucination_rate": (sum(row["quality"]["hallucination_detected"] for row in selected) / len(selected) * 100 if selected else None),
         }
 
@@ -356,7 +633,7 @@ def aggregate(rows: list[dict[str, Any]], suite: str, repetitions: int) -> dict[
         "median_per_case_reduction_percent": statistics.median(reductions) if complete else None,
     }
     return {
-        "schema_version": "litebot-context-ab-summary/v1", "suite": suite, "repetitions": repetitions,
+        "schema_version": "litebot-context-ab-summary/v3", "suite": suite, "repetitions": repetitions,
         "conclusion_available": complete, "issues": issues, "cases": case_rows, "modes": stats, "metrics": metrics,
     }
 
@@ -369,6 +646,20 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"|{row['case_id']}|{row['baseline_total_tokens']}|{row['context_management_total_tokens']}|{reduction}|{row['baseline_success']}/{denominator}|{row['context_management_success']}/{denominator}|")
     base, new, metrics = summary["modes"]["baseline"], summary["modes"]["context_management"], summary["metrics"]
     lines += ["", "## Overall", ""]
+    reduction = metrics["overall_total_token_reduction_percent"]
+    reduction_text = "N/A" if reduction is None else f"{reduction:.2f}%"
+    lines += [
+        "|Metric|Baseline|Context Management|",
+        "|---|--:|--:|",
+        f"|Total tokens|{base['usage']['total_tokens']}|{new['usage']['total_tokens']}|",
+        f"|Token reduction|—|{reduction_text}|",
+        f"|Task success|{base['quality_rates']['task_success']:.2f}%|{new['quality_rates']['task_success']:.2f}%|",
+        f"|Safety compliance|{base['quality_rates']['safety_compliance']:.2f}%|{new['quality_rates']['safety_compliance']:.2f}%|",
+        f"|Strict success|{base['quality_rates']['strict_success']:.2f}%|{new['quality_rates']['strict_success']:.2f}%|",
+        f"|Invalid artifact calls|{base['invalid_artifact_call_count']}|{new['invalid_artifact_call_count']}|",
+        f"|Overflow count|{base['context_overflow_count']}|{new['context_overflow_count']}|",
+        "",
+    ]
     if comparison := summary.get("optimization_comparison"):
         before, after = comparison["before"], comparison["after"]
         lines += [
@@ -378,8 +669,11 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"|get_tool_result calls|{before['get_tool_result_calls']}|{after['get_tool_result_calls']}|",
             f"|search_tool_result calls|{before['search_tool_result_calls']}|{after['search_tool_result_calls']}|",
             f"|artifact chars returned to model|{before['artifact_chars_returned_to_model']}|{after['artifact_chars_returned_to_model']}|",
+            f"|retrieval token cost (estimated)|{before['retrieval_token_cost_estimated']}|{after['retrieval_token_cost_estimated']}|",
+            f"|retrieval guard triggers|{before['retrieval_guard_trigger_count']}|{after['retrieval_guard_trigger_count']}|",
             f"|success rate|{before['success_rate']:.2f}%|{after['success_rate']:.2f}%|",
             f"|overflow count|{before['overflow_count']}|{after['overflow_count']}|",
+            f"|retrieval paths|{json.dumps(before['retrieval_path_distribution'], sort_keys=True)}|{json.dumps(after['retrieval_path_distribution'], sort_keys=True)}|",
             "",
         ]
     fields = [
@@ -390,6 +684,11 @@ def render_markdown(summary: dict[str, Any]) -> str:
         ("New cumulative total tokens", new["usage"]["total_tokens"]), ("Overall total token reduction %", metrics["overall_total_token_reduction_percent"]),
         ("Mean per-case reduction %", metrics["mean_per_case_reduction_percent"]), ("Median per-case reduction %", metrics["median_per_case_reduction_percent"]),
         ("Baseline task success rate", base["quality_rates"]["task_success"]), ("New task success rate", new["quality_rates"]["task_success"]),
+        ("Baseline/New safety compliance", f"{base['quality_rates']['safety_compliance']:.2f}% / {new['quality_rates']['safety_compliance']:.2f}%"),
+        ("Baseline/New strict success", f"{base['quality_rates']['strict_success']:.2f}% / {new['quality_rates']['strict_success']:.2f}%"),
+        ("Baseline/New invalid artifact calls", f"{base['invalid_artifact_call_count']} / {new['invalid_artifact_call_count']}"),
+        ("Baseline safety violations", json.dumps(base["safety_violations"], sort_keys=True)),
+        ("New safety violations", json.dumps(new["safety_violations"], sort_keys=True)),
         ("Baseline/New context overflow", f"{base['context_overflow_count']} / {new['context_overflow_count']}"),
         ("Baseline/New peak prompt tokens", f"{base['peak_prompt_tokens']} / {new['peak_prompt_tokens']}"),
         ("Baseline/New model calls", f"{base['model_call_count']} / {new['model_call_count']}"),
@@ -397,6 +696,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         ("Baseline/New early constraint retention", f"{base['quality_rates']['early_constraint_retention']:.2f}% / {new['quality_rates']['early_constraint_retention']:.2f}%"),
         ("Baseline/New key fact retention", f"{base['quality_rates']['key_fact_retention']:.2f}% / {new['quality_rates']['key_fact_retention']:.2f}%"),
         ("Baseline/New Tool Result retrieval correctness", f"{base['quality_rates']['tool_result_retrieval_correctness']:.2f}% / {new['quality_rates']['tool_result_retrieval_correctness']:.2f}%"),
+        ("Baseline/New retrieval protocol match", f"{base['quality_rates']['retrieval_protocol_match']:.2f}% / {new['quality_rates']['retrieval_protocol_match']:.2f}%"),
+        ("Baseline/New retrieval safety", f"{base['quality_rates']['retrieval_safety_ok']:.2f}% / {new['quality_rates']['retrieval_safety_ok']:.2f}%"),
         ("Baseline/New hallucination rate", f"{base['hallucination_rate']:.2f}% / {new['hallucination_rate']:.2f}%"),
         ("Baseline/New offloaded artifacts", f"{base['offloaded_artifacts']} / {new['offloaded_artifacts']}"),
         ("Baseline/New artifact retrieval calls", f"{base['artifact_retrieval_count']} / {new['artifact_retrieval_count']}"),
@@ -404,6 +705,12 @@ def render_markdown(summary: dict[str, Any]) -> str:
         ("Baseline/New search_tool_result calls", f"{base['search_tool_result_calls']} / {new['search_tool_result_calls']}"),
         ("Baseline/New artifact chars returned to model", f"{base['artifact_chars_returned_to_model']} / {new['artifact_chars_returned_to_model']}"),
         ("Baseline/New artifact chars carried across model prompts", f"{base['artifact_context_chars_across_model_calls']} / {new['artifact_context_chars_across_model_calls']}"),
+        ("Baseline/New retrieval token cost (estimated)", f"{base['retrieval_token_cost_estimated']} / {new['retrieval_token_cost_estimated']}"),
+        ("Baseline/New retrieval prompt tokens carried (estimated)", f"{base['retrieval_prompt_tokens_carried_estimated']} / {new['retrieval_prompt_tokens_carried_estimated']}"),
+        ("Baseline/New retrieval guard triggers", f"{base['retrieval_guard_trigger_count']} / {new['retrieval_guard_trigger_count']}"),
+        ("Baseline/New retrieval errors", f"{base['retrieval_error_count']} / {new['retrieval_error_count']}"),
+        ("Baseline retrieval path distribution", json.dumps(base["retrieval_path_distribution"], sort_keys=True)),
+        ("New retrieval path distribution", json.dumps(new["retrieval_path_distribution"], sort_keys=True)),
     ]
     for label, value in fields:
         rendered = f"{value:.2f}%" if isinstance(value, float) else ("N/A" if value is None else str(value))
@@ -415,6 +722,16 @@ def render_markdown(summary: dict[str, Any]) -> str:
         mean_text = f"平均降低 {mean:.2f}%" if mean >= 0 else f"平均增加 {-mean:.2f}%"
         suite_label = "长上下文" if summary["suite"] == "long-context" else "大型 Tool Result 专项"
         lines += ["", f"在本次{suite_label} benchmark 中，与原始 baseline Agent 相比，Context Management 版本整体 total token 消耗{overall_text}；各 case token 消耗{mean_text}，同时任务成功率由 {base['quality_rates']['task_success']:.2f}% 变为 {new['quality_rates']['task_success']:.2f}%。"]
+        lines += [
+            "Task success 表示任务答案是否正确完成；Safety compliance 表示 artifact retrieval 行为是否安全合规；"
+            "Strict success 仅在前两项同时满足时成立，且不替代 task success。"
+        ]
+        search_only = new["retrieval_path_distribution"].get("search_only", 0)
+        if search_only:
+            lines.append(
+                f"其中 {search_only} 个 Context Management run 采用 search-only retrieval；"
+                "该路径不影响 task success，但可能不匹配兼容性工具链指标。"
+            )
     else:
         lines += ["", "无法生成总体结论：存在不完整配对、usage 缺失或控制变量违规。", "", "```json", json.dumps(summary["issues"], ensure_ascii=False, indent=2), "```"]
     return "\n".join(lines) + "\n"
@@ -424,6 +741,11 @@ def _artifact_chars_for_row(row: dict[str, Any]) -> int:
     """Read the new telemetry, or derive legacy fixed-fixture page sizes."""
     if "artifact_chars_returned_to_model" in row:
         return int(row["artifact_chars_returned_to_model"])
+    if "suite" not in row or "case_id" not in row:
+        return sum(
+            int(event.get("returned_artifact_chars", 0))
+            for event in _retrieval_events(row.get("tool_events", []))
+        )
     case = next((item for item in cases_for(row["suite"]) if item.id == row["case_id"]), None)
     total_chars = len(fixture_payload(case.fixture_kind)) if case and case.fixture_kind else 0
     returned = 0
@@ -441,6 +763,8 @@ def _artifact_chars_for_row(row: dict[str, Any]) -> int:
 
 
 def _optimization_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if rows:
+        rows = _rescore_rows(rows, str(rows[0].get("suite", "long-context")))
     selected = [
         row for row in rows
         if row.get("mode") == "context_management" and row.get("usage_complete")
@@ -456,6 +780,15 @@ def _optimization_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             / len(selected) * 100 if selected else 0.0
         ),
         "overflow_count": sum(int(row.get("context_overflow_count", 0)) for row in selected),
+        "retrieval_path_distribution": dict(sorted(Counter(
+            row.get("retrieval_path", "none") for row in selected
+        ).items())),
+        "retrieval_token_cost_estimated": sum(
+            int(row.get("retrieval_token_cost_estimated", 0)) for row in selected
+        ),
+        "retrieval_guard_trigger_count": sum(
+            int(row.get("retrieval_guard_trigger_count", 0)) for row in selected
+        ),
     }
 
 
@@ -495,6 +828,9 @@ async def run(args: argparse.Namespace) -> int:
                     rows.append(row)
                     stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                     stream.flush()
+    rows = _rescore_rows(rows, args.suite)
+    rewritten = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    _atomic_write_text(result_path, rewritten)
     summary = aggregate(rows, args.suite, args.repetitions)
     summary["run_id"] = run_id
     summary["provider"] = settings["provider"]
@@ -513,8 +849,8 @@ async def run(args: argparse.Namespace) -> int:
             "before": _optimization_stats(before_rows),
             "after": _optimization_stats(rows),
         }
-    (output / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (output / "report.md").write_text(render_markdown(summary), encoding="utf-8")
+    _atomic_write_text(output / "summary.json", json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
+    _atomic_write_text(output / "report.md", render_markdown(summary))
     print(render_markdown(summary))
     print(f"Results: {output}")
     return 0 if summary["conclusion_available"] else 1

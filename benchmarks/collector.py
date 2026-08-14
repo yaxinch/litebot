@@ -10,6 +10,7 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.providers.base import LLMProvider, LLMResponse
+from nanobot.utils.helpers import estimate_message_tokens
 
 SECRET_KEYS = re.compile(r"api[_-]?key|token|authorization|password|secret", re.I)
 RETRIEVAL_TOOLS = {"get_tool_result", "search_tool_result"}
@@ -141,6 +142,9 @@ class RecordingProvider(LLMProvider):
                     retrieval_chars(message.get("content")) for message in retrieval_messages
                 ),
                 "artifact_retrieval_messages": len(retrieval_messages),
+                "artifact_retrieval_tokens_estimated": sum(
+                    estimate_message_tokens(message) for message in retrieval_messages
+                ),
             },
         })
 
@@ -197,6 +201,10 @@ class RecordingTool(Tool):
                 event["retrieval_kind"] = "page" if self.name == "get_tool_result" else "search"
                 event["artifact_id"] = kwargs.get("artifact_id")
                 event["returned_artifact_chars"] = retrieval_chars(result)
+                event["retrieval_token_cost_estimated"] = estimate_message_tokens({
+                    "role": "tool", "name": self.name, "content": result,
+                })
+                event["retrieval_token_cost_source"] = "tiktoken_message"
                 event["guard_decision"] = "blocked" if (
                     isinstance(result, str) and "retrieval guard blocked" in result
                 ) else "allowed"
