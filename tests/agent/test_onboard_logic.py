@@ -334,7 +334,7 @@ class TestSyncWorkspaceTemplates:
 
         sync_workspace_templates(workspace, silent=True)
 
-        assert (workspace / "memory").exists() or (workspace / "skills").exists()
+        assert (workspace / "memory" / "HISTORY.jsonl").exists()
 
     def test_returns_list_of_added_files(self, tmp_path):
         """Should return list of relative paths for added files."""

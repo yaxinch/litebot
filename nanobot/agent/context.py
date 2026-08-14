@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
+from nanobot.agent.episodic_memory import RetrievalResult, format_retrieval_context
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 from nanobot.utils.helpers import build_assistant_message, current_time_str, detect_image_mime
@@ -82,6 +83,7 @@ You are nanobot, a helpful AI assistant.
 Your workspace is at: {workspace_path}
 - Long-term memory: {workspace_path}/memory/MEMORY.md (write important facts here)
 - History log: {workspace_path}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
+- Structured episodic history: {workspace_path}/memory/HISTORY.jsonl (automatically retrieved by relevance).
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
 {platform_policy}
@@ -130,6 +132,7 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         chat_id: str | None = None,
         current_role: str = "user",
         session_summary: str | None = None,
+        episodic_memory: RetrievalResult | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
@@ -143,6 +146,10 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
 
         messages = [{"role": "system", "content": self.build_system_prompt(skill_names)}]
+        if episodic_memory:
+            episodic_context = format_retrieval_context(episodic_memory)
+            if episodic_context:
+                messages.append({"role": "system", "content": episodic_context})
         if session_summary:
             from nanobot.agent.context_summary import SUMMARY_HEADING
             messages.append({"role": "system", "content": f"{SUMMARY_HEADING}\n{session_summary}"})

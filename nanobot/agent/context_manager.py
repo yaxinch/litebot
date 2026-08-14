@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from nanobot.agent.context_summary import SUMMARY_HEADING, ContextSummarizer
+from nanobot.agent.episodic_memory import RetrievalResult
 from nanobot.config.schema import ContextManagementConfig
 from nanobot.session.artifacts import ToolArtifactStore
 from nanobot.session.manager import Session, SessionManager
@@ -104,6 +105,10 @@ class PreparedContext:
     hard_truncated_turns: int = 0
     offloaded_artifacts: int = 0
     compacted_retrieval_results: int = 0
+    episodic_entries: int = 0
+    episodic_injected_chars: int = 0
+    episodic_candidates: int = 0
+    episodic_duplicates_suppressed: int = 0
     actions: list[str] = field(default_factory=list)
 
 
@@ -301,6 +306,14 @@ class ContextManager:
         return None
 
     @staticmethod
+    def _system_prefix_end(messages: list[dict[str, Any]]) -> int:
+        """Return the first conversational message after protected system context."""
+        index = 0
+        while index < len(messages) and messages[index].get("role") == "system":
+            index += 1
+        return index
+
+    @staticmethod
     def _turn_ranges(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
         starts = [idx for idx, message in enumerate(messages) if message.get("role") == "user"]
         return [(start, starts[i + 1] if i + 1 < len(starts) else len(messages)) for i, start in enumerate(starts)]
@@ -326,6 +339,7 @@ class ContextManager:
     async def prepare(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
         session: Session | None = None, session_key: str | None = None,
+        episodic_memory: RetrievalResult | None = None,
     ) -> PreparedContext:
         work = messages
         compacted_retrieval = self.compact_transient_retrieval_results(work)
@@ -334,6 +348,12 @@ class ContextManager:
         prepared = PreparedContext(
             work, estimated, source, offloaded_artifacts=offloaded,
             compacted_retrieval_results=compacted_retrieval,
+            episodic_entries=len(episodic_memory.entries) if episodic_memory else 0,
+            episodic_injected_chars=episodic_memory.injected_chars if episodic_memory else 0,
+            episodic_candidates=episodic_memory.candidate_count if episodic_memory else 0,
+            episodic_duplicates_suppressed=(
+                episodic_memory.skipped_duplicates if episodic_memory else 0
+            ),
         )
         if compacted_retrieval:
             prepared.actions.append("retrieval_compacted")
@@ -363,11 +383,11 @@ class ContextManager:
                     self.sessions.save(session)
                 remove_count = max(0, end - visible_start)
                 summary_idx = self._summary_index(work)
-                history_start = (summary_idx + 1) if summary_idx is not None else 1
+                history_start = self._system_prefix_end(work)
                 del work[history_start:history_start + remove_count]
                 summary_message = {"role": "system", "content": f"{SUMMARY_HEADING}\n{summary}"}
                 if summary_idx is None:
-                    work.insert(1, summary_message)
+                    work.insert(self._system_prefix_end(work), summary_message)
                 else:
                     work[summary_idx] = summary_message
                 prepared.compacted_turns += len(eligible)
@@ -399,6 +419,10 @@ class ContextManager:
             "hard_truncated_turns": prepared.hard_truncated_turns,
             "offloaded_artifacts": prepared.offloaded_artifacts,
             "compacted_retrieval_results": prepared.compacted_retrieval_results,
+            "episodic_entries": prepared.episodic_entries,
+            "episodic_injected_chars": prepared.episodic_injected_chars,
+            "episodic_candidates": prepared.episodic_candidates,
+            "episodic_duplicates_suppressed": prepared.episodic_duplicates_suppressed,
             "actions": list(prepared.actions),
         })
         return prepared

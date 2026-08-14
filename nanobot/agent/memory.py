@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import weakref
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 
+from nanobot.agent.episodic_memory import EpisodicMemorySource, EpisodicMemoryStore
 from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
 
 if TYPE_CHECKING:
@@ -27,10 +29,26 @@ _SAVE_MEMORY_TOOL = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "history_entries": {
+                        "type": "array",
+                        "description": "Structured episodic events worth recalling in future conversations.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "timestamp": {"type": "string", "description": "ISO-8601 event time."},
+                                "category": {
+                                    "type": "string",
+                                    "enum": ["decision", "constraint", "preference", "project_state", "task_outcome", "fact"],
+                                },
+                                "content": {"type": "string"},
+                                "importance": {"type": "integer", "minimum": 1, "maximum": 5},
+                            },
+                            "required": ["timestamp", "category", "content", "importance"],
+                        },
+                    },
                     "history_entry": {
                         "type": "string",
-                        "description": "A paragraph summarizing key events/decisions/topics. "
-                        "Start with [YYYY-MM-DD HH:MM]. Include detail useful for grep search.",
+                        "description": "Deprecated compatibility field. Prefer history_entries.",
                     },
                     "memory_update": {
                         "type": "string",
@@ -38,7 +56,7 @@ _SAVE_MEMORY_TOOL = [
                         "facts plus new ones. Return unchanged if nothing new.",
                     },
                 },
-                "required": ["history_entry", "memory_update"],
+                "required": ["memory_update"],
             },
         },
     }
@@ -65,6 +83,10 @@ _TOOL_CHOICE_ERROR_MARKERS = (
     'should be ["none", "auto"]',
 )
 
+_CONSOLIDATION_SOURCE: contextvars.ContextVar[EpisodicMemorySource | None] = (
+    contextvars.ContextVar("nanobot_consolidation_source", default=None)
+)
+
 
 def _is_tool_choice_unsupported(content: str | None) -> bool:
     """Detect provider errors caused by forced tool_choice being unsupported."""
@@ -73,7 +95,7 @@ def _is_tool_choice_unsupported(content: str | None) -> bool:
 
 
 class MemoryStore:
-    """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
+    """Long-term Markdown memory plus structured, retrievable episodic history."""
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
 
@@ -81,6 +103,7 @@ class MemoryStore:
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self.episodic = EpisodicMemoryStore(workspace)
         self._consecutive_failures = 0
 
     def read_long_term(self) -> str:
@@ -116,6 +139,7 @@ class MemoryStore:
         messages: list[dict],
         provider: LLMProvider,
         model: str,
+        source: EpisodicMemorySource | None = None,
     ) -> bool:
         """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
         if not messages:
@@ -163,30 +187,44 @@ class MemoryStore:
                     len(response.content or ""),
                     (response.content or "")[:200],
                 )
-                return self._fail_or_raw_archive(messages)
+                return self._fail_or_raw_archive(messages, source)
 
             args = _normalize_save_memory_args(response.tool_calls[0].arguments)
             if args is None:
                 logger.warning("Memory consolidation: unexpected save_memory arguments")
-                return self._fail_or_raw_archive(messages)
+                return self._fail_or_raw_archive(messages, source)
 
-            if "history_entry" not in args or "memory_update" not in args:
+            if "memory_update" not in args or not ({"history_entries", "history_entry"} & args.keys()):
                 logger.warning("Memory consolidation: save_memory payload missing required fields")
-                return self._fail_or_raw_archive(messages)
+                return self._fail_or_raw_archive(messages, source)
 
-            entry = args["history_entry"]
             update = args["memory_update"]
 
-            if entry is None or update is None:
+            if update is None:
                 logger.warning("Memory consolidation: save_memory payload contains null required fields")
-                return self._fail_or_raw_archive(messages)
+                return self._fail_or_raw_archive(messages, source)
 
-            entry = _ensure_text(entry).strip()
-            if not entry:
-                logger.warning("Memory consolidation: history_entry is empty after normalization")
-                return self._fail_or_raw_archive(messages)
-
-            self.append_history(entry)
+            actual_source = source or EpisodicMemorySource()
+            if "history_entries" in args:
+                entries = args["history_entries"]
+                if not isinstance(entries, list) or not entries:
+                    logger.warning("Memory consolidation: history_entries must be a non-empty list")
+                    return self._fail_or_raw_archive(messages, source)
+                self.episodic.append(entries, source=actual_source)
+            else:
+                entry = args.get("history_entry")
+                if entry is None:
+                    logger.warning("Memory consolidation: history_entry is null")
+                    return self._fail_or_raw_archive(messages, source)
+                entry_text = _ensure_text(entry).strip()
+                if not entry_text:
+                    logger.warning("Memory consolidation: history_entry is empty after normalization")
+                    return self._fail_or_raw_archive(messages, source)
+                self.episodic.append(
+                    [entry], source=actual_source, mirror=False,
+                )
+                # Preserve the historical Markdown representation for old providers/tests.
+                self.append_history(entry_text)
             update = _ensure_text(update)
             if update != current_memory:
                 self.write_long_term(update)
@@ -196,24 +234,35 @@ class MemoryStore:
             return True
         except Exception:
             logger.exception("Memory consolidation failed")
-            return self._fail_or_raw_archive(messages)
+            return self._fail_or_raw_archive(messages, source)
 
-    def _fail_or_raw_archive(self, messages: list[dict]) -> bool:
+    def _fail_or_raw_archive(
+        self, messages: list[dict], source: EpisodicMemorySource | None = None,
+    ) -> bool:
         """Increment failure count; after threshold, raw-archive messages and return True."""
         self._consecutive_failures += 1
         if self._consecutive_failures < self._MAX_FAILURES_BEFORE_RAW_ARCHIVE:
             return False
-        self._raw_archive(messages)
+        self._raw_archive(messages, source)
         self._consecutive_failures = 0
         return True
 
-    def _raw_archive(self, messages: list[dict]) -> None:
+    def _raw_archive(
+        self, messages: list[dict], source: EpisodicMemorySource | None = None,
+    ) -> None:
         """Fallback: dump raw messages to HISTORY.md without LLM summarization."""
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.append_history(
-            f"[{ts}] [RAW] {len(messages)} messages\n"
+        now = datetime.now(timezone.utc)
+        raw = (
+            f"[{now.strftime('%Y-%m-%d %H:%M')}] [RAW] {len(messages)} messages\n"
             f"{self._format_messages(messages)}"
         )
+        self.episodic.append([{
+            "timestamp": now.isoformat(),
+            "category": "raw_archive",
+            "content": raw,
+            "importance": 2,
+        }], source=source or _CONSOLIDATION_SOURCE.get() or EpisodicMemorySource(kind="raw_archive"), mirror=False)
+        self.append_history(raw)
         logger.warning(
             "Memory consolidation degraded: raw-archived {} messages", len(messages)
         )
@@ -253,7 +302,18 @@ class MemoryConsolidator:
 
     async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
         """Archive a selected message chunk into persistent memory."""
-        return await self.store.consolidate(messages, self.provider, self.model)
+        return await self.store.consolidate(
+            messages, self.provider, self.model, source=_CONSOLIDATION_SOURCE.get(),
+        )
+
+    async def _consolidate_with_source(
+        self, messages: list[dict[str, object]], source: EpisodicMemorySource,
+    ) -> bool:
+        token = _CONSOLIDATION_SOURCE.set(source)
+        try:
+            return await self.consolidate_messages(messages)
+        finally:
+            _CONSOLIDATION_SOURCE.reset(token)
 
     def pick_consolidation_boundary(
         self,
@@ -294,12 +354,18 @@ class MemoryConsolidator:
             self._get_tool_definitions(),
         )
 
-    async def archive_messages(self, messages: list[dict[str, object]]) -> bool:
+    async def archive_messages(
+        self, messages: list[dict[str, object]], *, session_key: str | None = None,
+    ) -> bool:
         """Archive messages with guaranteed persistence (retries until raw-dump fallback)."""
         if not messages:
             return True
+        source = EpisodicMemorySource(
+            kind="session_archive", session_key=session_key,
+            message_start=0, message_end=len(messages),
+        )
         for _ in range(self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE):
-            if await self.consolidate_messages(messages):
+            if await self._consolidate_with_source(messages, source):
                 return True
         return True
 
@@ -356,7 +422,11 @@ class MemoryConsolidator:
                     source,
                     len(chunk),
                 )
-                if not await self.consolidate_messages(chunk):
+                memory_source = EpisodicMemorySource(
+                    kind="consolidation", session_key=session.key,
+                    message_start=session.last_consolidated, message_end=end_idx,
+                )
+                if not await self._consolidate_with_source(chunk, memory_source):
                     return
                 session.last_consolidated = end_idx
                 self.sessions.save(session)

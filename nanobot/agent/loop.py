@@ -18,6 +18,7 @@ from nanobot.agent.context_manager import (
     ContextManager,
     ContextOverflowError,
 )
+from nanobot.agent.episodic_memory import RetrievalResult
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
@@ -254,6 +255,17 @@ class AgentLoop:
             return session.get_history(max_messages=0), None
         return session.get_context_history(), session.context_summary
 
+    def _retrieve_episodic(self, query: str, session_key: str) -> RetrievalResult | None:
+        """Retrieve query-relevant history without making it part of the session."""
+        if self.benchmark_context_mode == "baseline":
+            return None
+        try:
+            result = self.context.memory.episodic.retrieve(query, session_key=session_key)
+            return result if result.entries else None
+        except Exception:
+            logger.exception("Episodic memory retrieval failed for {}", session_key)
+            return None
+
     async def _maybe_consolidate_memory(self, session: Session) -> None:
         """Keep legacy memory consolidation outside controlled context A/B runs."""
         if self.benchmark_context_mode is None:
@@ -294,6 +306,7 @@ class AgentLoop:
         message_id: str | None = None,
         session: Session | None = None,
         session_key: str | None = None,
+        episodic_memory: RetrievalResult | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
 
@@ -319,6 +332,7 @@ class AgentLoop:
                         loop_self.tools.get_definitions(),
                         session=session,
                         session_key=session_key,
+                        episodic_memory=episodic_memory,
                     )
 
             async def on_stream(self, context: AgentHookContext, delta: str) -> None:
@@ -376,6 +390,12 @@ class AgentLoop:
                 "compacted_turns": 0,
                 "hard_truncated_turns": 0,
                 "offloaded_artifacts": 0,
+                "episodic_entries": len(episodic_memory.entries) if episodic_memory else 0,
+                "episodic_injected_chars": episodic_memory.injected_chars if episodic_memory else 0,
+                "episodic_candidates": episodic_memory.candidate_count if episodic_memory else 0,
+                "episodic_duplicates_suppressed": (
+                    episodic_memory.skipped_duplicates if episodic_memory else 0
+                ),
                 "actions": ["context_overflow"],
                 "error": str(exc),
             })
@@ -519,16 +539,19 @@ class AgentLoop:
             await self._maybe_consolidate_memory(session)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history, session_summary = self._session_context(session)
+            episodic_memory = self._retrieve_episodic(msg.content, key)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role, session_summary=session_summary,
+                episodic_memory=episodic_memory,
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
                 session=session, session_key=key,
+                episodic_memory=episodic_memory,
             )
             self._save_turn(session, all_msgs, start_message=messages[-1])
             self.sessions.save(session)
@@ -561,12 +584,14 @@ class AgentLoop:
                 message_tool.start_turn()
 
         history, session_summary = self._session_context(session)
+        episodic_memory = self._retrieve_episodic(msg.content, key)
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
             session_summary=session_summary,
+            episodic_memory=episodic_memory,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
@@ -585,6 +610,7 @@ class AgentLoop:
             channel=msg.channel, chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
             session=session, session_key=key,
+            episodic_memory=episodic_memory,
         )
 
         if final_content is None:

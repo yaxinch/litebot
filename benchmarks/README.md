@@ -30,7 +30,12 @@ python -m benchmarks.live_context --output benchmark_results/live-context.json
 python -m benchmarks.context_management --output benchmark_results/context-management.json
 python -m benchmarks ab-context --suite long-context --repetitions 3
 python -m benchmarks ab-context --suite large-tool-result --repetitions 3
+python -m benchmarks episodic-memory --output benchmark_results/episodic-memory.json
 ```
+
+`episodic-memory` is a fully offline deterministic benchmark for structured
+history migration and lexical Top-K retrieval. It reports Recall@1/3, MRR,
+duplicate suppression, injected characters, and p50/p95 retrieval latency.
 
 `ab-context` is the strict live-provider paired benchmark. It runs the same
 `AgentLoop` in explicit `baseline` and `context_management` modes, records all
