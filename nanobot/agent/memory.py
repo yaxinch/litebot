@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 
+from nanobot.agent.hook import HookAction, HookManager, LifecycleEvent, LifecycleEventType
 from nanobot.agent.episodic_memory import EpisodicMemorySource, EpisodicMemoryStore
 from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
 
@@ -99,12 +100,13 @@ class MemoryStore:
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, hook_manager: HookManager | None = None):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self.episodic = EpisodicMemoryStore(workspace)
         self._consecutive_failures = 0
+        self.hook_manager = hook_manager
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -204,6 +206,17 @@ class MemoryStore:
                 logger.warning("Memory consolidation: save_memory payload contains null required fields")
                 return self._fail_or_raw_archive(messages, source)
 
+            if self.hook_manager:
+                write_event = await self.hook_manager.dispatch(LifecycleEvent(
+                    LifecycleEventType.MEMORY_WRITE,
+                    payload={"memory_update": update, "arguments": args, "source": source, "messages": messages},
+                ))
+                if write_event.decision and write_event.decision.action is HookAction.DENY:
+                    logger.info("Memory write denied: {}", write_event.decision.reason)
+                    return True
+                update = write_event.payload.get("memory_update", update)
+                args = write_event.payload.get("arguments", args)
+
             actual_source = source or EpisodicMemorySource()
             if "history_entries" in args:
                 entries = args["history_entries"]
@@ -228,6 +241,13 @@ class MemoryStore:
             update = _ensure_text(update)
             if update != current_memory:
                 self.write_long_term(update)
+
+            if self.hook_manager:
+                await self.hook_manager.dispatch(LifecycleEvent(
+                    LifecycleEventType.MEMORY_WRITE,
+                    payload={"memory_update": update, "arguments": args, "source": source, "written": True},
+                    phase="after",
+                ))
 
             self._consecutive_failures = 0
             logger.info("Memory consolidation done for {} messages", len(messages))
@@ -285,8 +305,9 @@ class MemoryConsolidator:
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         max_completion_tokens: int = 4096,
+        hook_manager: HookManager | None = None,
     ):
-        self.store = MemoryStore(workspace)
+        self.store = MemoryStore(workspace, hook_manager=hook_manager)
         self.provider = provider
         self.model = model
         self.sessions = sessions

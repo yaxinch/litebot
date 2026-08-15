@@ -1,8 +1,17 @@
 """Tool registry for dynamic tool management."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+
+
+@dataclass(slots=True)
+class ToolExecutionResult:
+    content: Any
+    status: str = "ok"
+    stage: str | None = None
+    error: str | None = None
 
 
 class ToolRegistry:
@@ -37,26 +46,34 @@ class ToolRegistry:
 
     async def execute(self, name: str, params: dict[str, Any]) -> Any:
         """Execute a tool by name with given parameters."""
-        _HINT = "\n\n[Analyze the error above and try a different approach.]"
+        return (await self.execute_detailed(name, params)).content
+
+    async def execute_detailed(self, name: str, params: dict[str, Any]) -> ToolExecutionResult:
+        """Execute a tool while preserving error classification for lifecycle observers."""
+        hint = "\n\n[Analyze the error above and try a different approach.]"
 
         tool = self._tools.get(name)
         if not tool:
-            return f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
+            content = f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
+            return ToolExecutionResult(content, "error", "lookup", content)
 
         try:
             # Attempt to cast parameters to match schema types
             params = tool.cast_params(params)
-            
+
             # Validate parameters
             errors = tool.validate_params(params)
             if errors:
-                return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + _HINT
+                content = f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + hint
+                return ToolExecutionResult(content, "error", "validation", content)
             result = await tool.execute(**params)
             if isinstance(result, str) and result.startswith("Error"):
-                return result + _HINT
-            return result
+                content = result + hint
+                return ToolExecutionResult(content, "error", "result", content)
+            return ToolExecutionResult(result)
         except Exception as e:
-            return f"Error executing {name}: {str(e)}" + _HINT
+            content = f"Error executing {name}: {str(e)}" + hint
+            return ToolExecutionResult(content, "error", "execution", str(e))
 
     @property
     def tool_names(self) -> list[str]:
@@ -68,3 +85,8 @@ class ToolRegistry:
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools
+
+
+# Runner uses the detailed fast path only while the public execution method has
+# not been overridden. This preserves subclass and monkeypatch compatibility.
+DEFAULT_TOOL_EXECUTE = ToolRegistry.execute

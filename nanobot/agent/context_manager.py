@@ -10,6 +10,7 @@ from typing import Any
 
 from nanobot.agent.context_summary import SUMMARY_HEADING, ContextSummarizer
 from nanobot.agent.episodic_memory import RetrievalResult
+from nanobot.agent.hook import HookAction, HookManager, LifecycleEvent, LifecycleEventType
 from nanobot.config.schema import ContextManagementConfig
 from nanobot.session.artifacts import ToolArtifactStore
 from nanobot.session.manager import Session, SessionManager
@@ -117,6 +118,7 @@ class ContextManager:
         self, provider: Any, model: str, context_window_tokens: int,
         policy: ContextManagementPolicy, artifacts: ToolArtifactStore,
         sessions: SessionManager | None = None,
+        hook_manager: HookManager | None = None,
     ):
         self.provider = provider
         self.model = model
@@ -124,6 +126,7 @@ class ContextManager:
         self.policy = policy
         self.artifacts = artifacts
         self.sessions = sessions
+        self.hook_manager = hook_manager
         self.summarizer = ContextSummarizer(provider, model)
         self.last_prepared: PreparedContext | None = None
         self.telemetry: list[dict[str, Any]] = []
@@ -362,38 +365,62 @@ class ContextManager:
         hard_limit = int(self.effective_budget * self.policy.hard_threshold)
 
         if estimated > soft_limit and session is not None:
-            for _ in range(self.policy.max_compaction_rounds):
-                ranges = session.context_turn_ranges()
-                eligible = ranges[:-self.policy.recent_turns] if len(ranges) > self.policy.recent_turns else []
-                if not eligible or estimated <= target:
-                    break
-                start, end = eligible[0][0], eligible[-1][1]
-                chunk = Session._to_llm_messages(session.messages[start:end])
-                self.compact_retrieval_history_for_persistence(chunk)
-                summary = await self.summarizer.summarize(session.context_summary, chunk)
-                if not summary:
-                    prepared.actions.append("summary_failed")
-                    break
-                old_through = session.context_summary_through
-                visible_start = max(old_through, session.last_consolidated)
-                session.context_summary = summary
-                session.context_summary_through = end
-                session.context_summary_updated_at = datetime.now()
-                if self.sessions:
-                    self.sessions.save(session)
-                remove_count = max(0, end - visible_start)
-                summary_idx = self._summary_index(work)
-                history_start = self._system_prefix_end(work)
-                del work[history_start:history_start + remove_count]
-                summary_message = {"role": "system", "content": f"{SUMMARY_HEADING}\n{summary}"}
-                if summary_idx is None:
-                    work.insert(self._system_prefix_end(work), summary_message)
+            compact_event = None
+            if self.hook_manager:
+                compact_event = await self.hook_manager.dispatch(LifecycleEvent(
+                    LifecycleEventType.CONTEXT_COMPACT,
+                    payload={"messages": work, "estimated_tokens": estimated, "soft_limit": soft_limit, "target": target, "session": session},
+                    session_key=session_key,
+                ))
+                if compact_event.decision and compact_event.decision.action is HookAction.DENY:
+                    prepared.actions.append("compaction_denied")
                 else:
-                    work[summary_idx] = summary_message
-                prepared.compacted_turns += len(eligible)
-                prepared.actions.append("compacted")
-                estimated, source = self._estimate(work, tools)
-                break
+                    work = compact_event.payload.get("messages", work)
+            denied = bool(
+                compact_event
+                and compact_event.decision
+                and compact_event.decision.action is HookAction.DENY
+            )
+            if not denied:
+                for _ in range(self.policy.max_compaction_rounds):
+                    ranges = session.context_turn_ranges()
+                    eligible = ranges[:-self.policy.recent_turns] if len(ranges) > self.policy.recent_turns else []
+                    if not eligible or estimated <= target:
+                        break
+                    start, end = eligible[0][0], eligible[-1][1]
+                    chunk = Session._to_llm_messages(session.messages[start:end])
+                    self.compact_retrieval_history_for_persistence(chunk)
+                    summary = await self.summarizer.summarize(session.context_summary, chunk)
+                    if not summary:
+                        prepared.actions.append("summary_failed")
+                        break
+                    old_through = session.context_summary_through
+                    visible_start = max(old_through, session.last_consolidated)
+                    session.context_summary = summary
+                    session.context_summary_through = end
+                    session.context_summary_updated_at = datetime.now()
+                    if self.sessions:
+                        self.sessions.save(session)
+                    remove_count = max(0, end - visible_start)
+                    summary_idx = self._summary_index(work)
+                    history_start = self._system_prefix_end(work)
+                    del work[history_start:history_start + remove_count]
+                    summary_message = {"role": "system", "content": f"{SUMMARY_HEADING}\n{summary}"}
+                    if summary_idx is None:
+                        work.insert(self._system_prefix_end(work), summary_message)
+                    else:
+                        work[summary_idx] = summary_message
+                    prepared.compacted_turns += len(eligible)
+                    prepared.actions.append("compacted")
+                    estimated, source = self._estimate(work, tools)
+                    break
+
+            if self.hook_manager:
+                await self.hook_manager.dispatch(LifecycleEvent(
+                    LifecycleEventType.CONTEXT_COMPACT,
+                    payload={"messages": work, "prepared": prepared, "estimated_tokens": estimated, "actions": prepared.actions},
+                    phase="after", session_key=session_key,
+                ))
 
         while estimated > hard_limit:
             ranges = self._turn_ranges(work)

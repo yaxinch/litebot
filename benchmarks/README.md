@@ -31,11 +31,20 @@ python -m benchmarks.context_management --output benchmark_results/context-manag
 python -m benchmarks ab-context --suite long-context --repetitions 3
 python -m benchmarks ab-context --suite large-tool-result --repetitions 3
 python -m benchmarks episodic-memory --output benchmark_results/episodic-memory.json
+python -m benchmarks hooks
+python -m benchmarks hooks --case tool_run_order --repetitions 30
 ```
 
 `episodic-memory` is a fully offline deterministic benchmark for structured
 history migration and lexical Top-K retrieval. It reports Recall@1/3, MRR,
 duplicate suppression, injected characters, and p50/p95 retrieval latency.
+
+`hooks` is a fully offline deterministic lifecycle regression suite. Its 14
+cases verify session/run/LLM/tool ordering, payloads, failure isolation,
+legacy `AgentHook` compatibility, state isolation, allow/deny/modify control,
+and callback overhead. It uses scripted providers and fixed tools, never an
+LLM judge or network service. Results contain exact traces plus correctness
+rates and unexpected/missing/duplicate event counts.
 
 `ab-context` is the strict live-provider paired benchmark. It runs the same
 `AgentLoop` in explicit `baseline` and `context_management` modes, records all
