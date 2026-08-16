@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+from nanobot.security.tool_policy import ToolErrorClassifier, ToolErrorInfo, ToolOutcome
 
 
 @dataclass(slots=True)
@@ -12,6 +13,22 @@ class ToolExecutionResult:
     status: str = "ok"
     stage: str | None = None
     error: str | None = None
+    outcome: ToolOutcome = ToolOutcome.SUCCESS
+    progress: dict[str, Any] | None = None
+    error_info: ToolErrorInfo | None = None
+    normalized_arguments: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.status == "error" and self.outcome is ToolOutcome.SUCCESS:
+            self.outcome = ToolOutcome.FAILED
+        if self.status == "error" and self.error_info is None:
+            self.error_info = ToolErrorClassifier.classify(
+                self.error or self.content, stage=self.stage or "result"
+            )
+
+    @classmethod
+    def partial(cls, content: Any, **progress: Any) -> "ToolExecutionResult":
+        return cls(content=content, outcome=ToolOutcome.PARTIAL, progress=progress or None)
 
 
 class ToolRegistry:
@@ -55,7 +72,10 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             content = f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
-            return ToolExecutionResult(content, "error", "lookup", content)
+            return ToolExecutionResult(
+                content, "error", "lookup", content, ToolOutcome.FAILED,
+                error_info=ToolErrorClassifier.classify(content, stage="lookup"),
+            )
 
         try:
             # Attempt to cast parameters to match schema types
@@ -65,15 +85,36 @@ class ToolRegistry:
             errors = tool.validate_params(params)
             if errors:
                 content = f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + hint
-                return ToolExecutionResult(content, "error", "validation", content)
+                return ToolExecutionResult(
+                content, "error", "validation", content, ToolOutcome.FAILED,
+                error_info=ToolErrorClassifier.classify(content, stage="validation"),
+                normalized_arguments=params,
+            )
             result = await tool.execute(**params)
-            if isinstance(result, str) and result.startswith("Error"):
+            if isinstance(result, ToolExecutionResult):
+                if result.normalized_arguments is None:
+                    result.normalized_arguments = params
+                return result
+            is_error = isinstance(result, str) and (
+                result.startswith("Error")
+                or "timed out" in result.lower()
+                or result.startswith("(MCP tool call was cancelled")
+            )
+            if is_error:
                 content = result + hint
-                return ToolExecutionResult(content, "error", "result", content)
-            return ToolExecutionResult(result)
+                return ToolExecutionResult(
+                    content, "error", "result", content, ToolOutcome.FAILED,
+                    error_info=ToolErrorClassifier.classify(result, stage="result"),
+                    normalized_arguments=params,
+                )
+            return ToolExecutionResult(result, normalized_arguments=params)
         except Exception as e:
             content = f"Error executing {name}: {str(e)}" + hint
-            return ToolExecutionResult(content, "error", "execution", str(e))
+            return ToolExecutionResult(
+                content, "error", "execution", str(e), ToolOutcome.FAILED,
+                error_info=ToolErrorClassifier.classify(e, stage="execution"),
+                normalized_arguments=params,
+            )
 
     @property
     def tool_names(self) -> list[str]:

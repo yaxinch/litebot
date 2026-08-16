@@ -16,6 +16,10 @@ def main() -> int:
         from benchmarks.hooks import main as hooks_main
 
         return hooks_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "tool-safety":
+        from benchmarks.tool_safety import main as tool_safety_main
+
+        return tool_safety_main(sys.argv[2:])
     return standard_main()
 
 

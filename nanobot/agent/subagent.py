@@ -4,12 +4,12 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.agent.runner import AgentRunner, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -17,8 +17,11 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ExecToolConfig
 from nanobot.providers.base import LLMProvider
+from nanobot.security.tool_policy import ToolPolicyEngine
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
 
 class SubagentManager:
@@ -34,6 +37,7 @@ class SubagentManager:
         web_proxy: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        policy_engine: ToolPolicyEngine | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -45,6 +49,7 @@ class SubagentManager:
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.policy_engine = policy_engine
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
@@ -63,7 +68,7 @@ class SubagentManager:
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, session_key)
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -87,6 +92,7 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        session_key: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -108,7 +114,7 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
-            
+
             system_prompt = self._build_subagent_prompt()
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
@@ -118,9 +124,14 @@ class SubagentManager:
             class _SubagentHook(AgentHook):
                 async def before_execute_tools(self, context: AgentHookContext) -> None:
                     for tool_call in context.tool_calls:
-                        args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                        arguments = (
+                            self_policy.redactor.redact(tool_call.arguments)
+                            if self_policy else tool_call.arguments
+                        )
+                        args_str = json.dumps(arguments, ensure_ascii=False)
                         logger.debug("Subagent [{}] executing: {} with arguments: {}", task_id, tool_call.name, args_str)
 
+            self_policy = self.policy_engine
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
@@ -130,6 +141,8 @@ class SubagentManager:
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
+                policy_engine=self.policy_engine,
+                session_key=f"{session_key or 'subagent'}:{task_id}",
             ))
             if result.stop_reason == "tool_error":
                 await self._announce_result(
@@ -213,7 +226,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             lines.append("Failure:")
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
-    
+
     def _build_subagent_prompt(self) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder

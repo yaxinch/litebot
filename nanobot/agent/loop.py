@@ -47,11 +47,21 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
+from nanobot.security.tool_policy import (
+    ToolPolicyDecision,
+    ToolPolicyEngine,
+    ToolRequestContext,
+)
 from nanobot.session.artifacts import ToolArtifactStore
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebSearchConfig
+    from nanobot.config.schema import (
+        ChannelsConfig,
+        ExecToolConfig,
+        ToolPolicyConfig,
+        WebSearchConfig,
+    )
     from nanobot.cron.service import CronService
 
 
@@ -89,6 +99,10 @@ class AgentLoop:
         timezone: str | None = None,
         context_management_config: Any | None = None,
         benchmark_context_mode: Literal["baseline", "context_management"] | None = None,
+        tool_policy_config: "ToolPolicyConfig | None" = None,
+        confirmation_handler: Callable[
+            [ToolRequestContext, ToolPolicyDecision], Awaitable[bool]
+        ] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -130,6 +144,13 @@ class AgentLoop:
         self._last_artifact_gc = 0.0
         self.runner = AgentRunner(provider)
         self.hooks = HookManager()
+        self.policy_engine = ToolPolicyEngine(
+            tool_policy_config,
+            workspace,
+            restrict_to_workspace=restrict_to_workspace,
+            extra_read_roots=[BUILTIN_SKILLS_DIR],
+        )
+        self.confirmation_handler = confirmation_handler
         self._hook_sessions: set[str] = set()
         self.context_manager.hook_manager = self.hooks
         self.subagents = SubagentManager(
@@ -141,6 +162,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            policy_engine=self.policy_engine,
         )
 
         self._running = False
@@ -390,7 +412,9 @@ class AgentLoop:
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
                     await on_progress(tool_hint, tool_hint=True)
                 for tc in context.tool_calls:
-                    args_str = json.dumps(tc.arguments, ensure_ascii=False)
+                    args_str = json.dumps(
+                        loop_self.policy_engine.redactor.redact(tc.arguments), ensure_ascii=False
+                    )
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
                 loop_self._set_tool_context(channel, chat_id, message_id)
 
@@ -420,6 +444,8 @@ class AgentLoop:
                     },
                     error_message="Sorry, I encountered an error calling the AI model.",
                     concurrent_tools=True,
+                    policy_engine=self.policy_engine,
+                    confirmation_handler=self.confirmation_handler,
                     temperature=self.provider.generation.temperature,
                     max_tokens=self.provider.generation.max_tokens,
                 )

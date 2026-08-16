@@ -1,12 +1,11 @@
 """CLI commands for nanobot."""
 
 import asyncio
-from contextlib import contextmanager, nullcontext
-
 import os
 import select
 import signal
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -465,6 +464,7 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 def _warn_deprecated_config_keys(config_path: Path | None) -> None:
     """Hint users to remove obsolete keys from their config file."""
     import json
+
     from nanobot.config.loader import get_config_path
 
     path = config_path or get_config_path()
@@ -547,6 +547,7 @@ def gateway(
         exec_config=config.tools.exec,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        tool_policy_config=config.tools.policy,
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
@@ -754,6 +755,7 @@ def agent(
         exec_config=config.tools.exec,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        tool_policy_config=config.tools.policy,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,

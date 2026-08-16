@@ -1,3 +1,4 @@
+import sys
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
@@ -39,6 +40,36 @@ class SampleTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         return "ok"
+
+
+class OneOfTool(SampleTool):
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "queries": {"type": "array"}},
+            "oneOf": [{"required": ["query"]}, {"required": ["queries"]}],
+        }
+
+
+def test_one_of_requires_exactly_one_schema() -> None:
+    tool = OneOfTool()
+    assert tool.validate_params({"query": "x"}) == []
+    assert tool.validate_params({})
+    assert tool.validate_params({"query": "x", "queries": ["x"]})
+
+
+def test_additional_properties_false_rejects_unknown_argument() -> None:
+    class StrictTool(SampleTool):
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {
+                "type": "object", "properties": {"name": {"type": "string"}},
+                "additionalProperties": False,
+            }
+
+    tool = StrictTool()
+    assert tool.validate_params({"name": "ok", "extra": 1}) == ["unexpected extra"]
 
 
 def test_validate_params_missing_required() -> None:
@@ -193,6 +224,15 @@ def test_cast_params_string_to_bool() -> None:
     assert tool.cast_params({"enabled": "true"})["enabled"] is True
     assert tool.cast_params({"enabled": "false"})["enabled"] is False
     assert tool.cast_params({"enabled": "1"})["enabled"] is True
+
+
+def test_cast_params_does_not_hide_invalid_complex_string_value() -> None:
+    tool = CastTestTool({
+        "type": "object", "properties": {"name": {"type": "string"}}
+    })
+    result = tool.cast_params({"name": {"unexpected": "object"}})
+    assert result["name"] == {"unexpected": "object"}
+    assert tool.validate_params(result) == ["name should be string"]
 
 
 def test_cast_params_array_items() -> None:
@@ -395,7 +435,9 @@ async def test_exec_timeout_parameter() -> None:
     """LLM-supplied timeout should override the constructor default."""
     tool = ExecTool(timeout=60)
     # A very short timeout should cause the command to be killed
-    result = await tool.execute(command="sleep 10", timeout=1)
+    result = await tool.execute(
+        command=f'"{sys.executable}" -c "import time; time.sleep(10)"', timeout=1
+    )
     assert "timed out" in result
     assert "1 seconds" in result
 

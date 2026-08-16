@@ -1,9 +1,10 @@
 """Configuration schema using Pydantic."""
 
+import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -160,6 +161,81 @@ class ExecToolConfig(Base):
     timeout: int = 60
     path_append: str = ""
 
+
+class ToolPolicyArgumentMatcher(Base):
+    """Declarative matcher for one tool argument."""
+
+    regex: list[str] = Field(default_factory=list)
+
+    @field_validator("regex")
+    @classmethod
+    def validate_regexes(cls, patterns: list[str]) -> list[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid tool policy regex {pattern!r}: {exc}") from exc
+        return patterns
+
+
+class ToolPolicyRuleConfig(Base):
+    """A tool-name and optional argument based policy rule."""
+
+    id: str = Field(min_length=1)
+    tools: list[str] = Field(default_factory=lambda: ["*"])
+    action: Literal["allow", "confirm", "deny"]
+    reason: str = Field(min_length=1)
+    priority: int = 0
+    arguments: dict[str, ToolPolicyArgumentMatcher] = Field(default_factory=dict)
+
+
+class ToolWorkspacePolicyConfig(Base):
+    """Cross-platform filesystem boundary policy."""
+
+    outside_action: Literal["allow", "confirm", "deny"] = "confirm"
+    restricted_outside_action: Literal["allow", "confirm", "deny"] = "deny"
+    traversal_action: Literal["allow", "confirm", "deny"] = "deny"
+    sensitive_action: Literal["allow", "confirm", "deny"] = "deny"
+    sensitive_names: list[str] = Field(
+        default_factory=lambda: [".git", ".env", ".ssh", ".aws", ".gnupg", ".kube"]
+    )
+    path_arguments: dict[str, list[str]] = Field(default_factory=lambda: {
+        "read_file": ["path"], "write_file": ["path"], "edit_file": ["path"],
+        "list_dir": ["path"], "exec": ["working_dir"],
+    })
+    read_only_tools: list[str] = Field(default_factory=lambda: ["read_file"])
+
+
+class ToolRedactionConfig(Base):
+    """Fields and value shapes hidden from logs and audit records."""
+
+    replacement: str = "[REDACTED]"
+    keys: list[str] = Field(
+        default_factory=lambda: [
+            "api_key", "apikey", "token", "access_token", "refresh_token",
+            "password", "secret", "authorization",
+        ]
+    )
+
+
+class ToolPolicyConfig(Base):
+    """Central tool runtime governance configuration."""
+
+    enabled: bool = True
+    default_action: Literal["allow", "confirm", "deny"] = "confirm"
+    duplicate_window_seconds: float = Field(default=5.0, ge=0)
+    duplicate_action: Literal["allow", "confirm", "deny"] = "deny"
+    audit_path: str = Field(default="logs/tool-audit.jsonl", min_length=1)
+    trusted_tools: list[str] = Field(default_factory=lambda: [
+        "read_file", "write_file", "edit_file", "list_dir", "exec",
+        "web_search", "web_fetch", "message", "spawn", "cron",
+        "get_tool_result", "search_tool_result",
+    ])
+    command_arguments: dict[str, str] = Field(default_factory=lambda: {"exec": "command"})
+    workspace: ToolWorkspacePolicyConfig = Field(default_factory=ToolWorkspacePolicyConfig)
+    redaction: ToolRedactionConfig = Field(default_factory=ToolRedactionConfig)
+    rules: list[ToolPolicyRuleConfig] = Field(default_factory=list)
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -178,6 +254,7 @@ class ToolsConfig(Base):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+    policy: ToolPolicyConfig = Field(default_factory=ToolPolicyConfig)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 

@@ -1384,7 +1384,15 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
+| `tools.policy.enabled` | `true` | Enables centralized ALLOW / CONFIRM / DENY governance and structured tool audit. |
+| `tools.policy.defaultAction` | `"confirm"` | Action for unmatched dynamic tools. Built-in and local registered tools remain compatible by default. |
+| `tools.policy.duplicateWindowSeconds` | `5` | Blocks an identical call in the same session during this window. Set to `0` to disable detection. |
+| `tools.policy.auditPath` | `"logs/tool-audit.jsonl"` | Workspace-relative, append-only redacted audit file. |
 | `channels.*.allowFrom` | `[]` (deny all) | Whitelist of user IDs. Empty denies all; use `["*"]` to allow everyone. |
+
+Policy rules are declared under `tools.policy.rules`. Each rule requires `id`, `tools`,
+`action`, and `reason`, and may match argument values with regular expressions. CONFIRM is
+fail-closed unless the embedding application supplies an asynchronous confirmation handler.
 
 
 ### Timezone

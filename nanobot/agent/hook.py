@@ -26,6 +26,7 @@ class LifecycleEventType(StrEnum):
     PRE_TOOL_USE = "PreToolUse"
     POST_TOOL_USE = "PostToolUse"
     TOOL_ERROR = "ToolError"
+    TOOL_AUDIT = "ToolAudit"
     CONTEXT_COMPACT = "ContextCompact"
     MEMORY_WRITE = "MemoryWrite"
     SESSION_END = "SessionEnd"

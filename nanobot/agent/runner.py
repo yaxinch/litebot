@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from time import perf_counter
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from nanobot.agent.hook import (
@@ -18,6 +19,16 @@ from nanobot.agent.hook import (
 )
 from nanobot.agent.tools.registry import DEFAULT_TOOL_EXECUTE, ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
+from nanobot.security.tool_policy import (
+    PolicyAction,
+    ToolAuditWriteResult,
+    ToolErrorClassifier,
+    ToolOutcome,
+    ToolPolicyDecision,
+    ToolPolicyEngine,
+    ToolRequestContext,
+    error_info_dict,
+)
 from nanobot.utils.helpers import build_assistant_message
 
 _DEFAULT_MAX_ITERATIONS_MESSAGE = (
@@ -47,6 +58,10 @@ class AgentRunSpec:
     max_iterations_message: str | None = None
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
+    policy_engine: ToolPolicyEngine | None = None
+    confirmation_handler: Callable[
+        [ToolRequestContext, ToolPolicyDecision], Awaitable[bool]
+    ] | None = None
 
 
 @dataclass(slots=True)
@@ -59,7 +74,7 @@ class AgentRunResult:
     usage: dict[str, int] = field(default_factory=dict)
     stop_reason: str = "completed"
     error: str | None = None
-    tool_events: list[dict[str, str]] = field(default_factory=list)
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
     run_id: str | None = None
 
 
@@ -490,7 +505,9 @@ class AgentRunner:
         tool_call: ToolCallRequest,
         hook_manager: HookManager | None = None,
         iteration: int | None = None,
-    ) -> tuple[Any, dict[str, str], BaseException | None]:
+    ) -> tuple[Any, dict[str, Any], BaseException | None]:
+        started = perf_counter()
+        hook_denial: tuple[str, str | None] | None = None
         if hook_manager:
             event = await hook_manager.dispatch(
                 LifecycleEvent(
@@ -509,29 +526,77 @@ class AgentRunner:
             )
             if event.decision and event.decision.action is HookAction.DENY:
                 detail = event.decision.reason or "tool use denied"
-                await hook_manager.dispatch(
-                    LifecycleEvent(
-                        LifecycleEventType.TOOL_ERROR,
-                        payload={
-                            "tool_call": tool_call,
-                            "stage": "denied",
-                            "error": detail,
-                            "result": event.decision.response_content or f"Error: {detail}",
-                        },
-                        phase="error",
-                        run_id=spec.run_id,
-                        session_key=spec.session_key,
-                        iteration=iteration,
-                        state=spec.event_metadata,
-                    )
-                )
-                return (
-                    event.decision.response_content or f"Error: {detail}",
-                    {"name": tool_call.name, "status": "error", "detail": detail},
-                    None,
-                )
+                hook_denial = (detail, event.decision.response_content)
             tool_call.name = event.payload.get("name", tool_call.name)
             tool_call.arguments = event.payload.get("arguments", tool_call.arguments)
+
+        tool = spec.tools.get(tool_call.name) if isinstance(spec.tools, ToolRegistry) else None
+        policy_context = ToolRequestContext(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            arguments=tool_call.arguments,
+            schema=tool.parameters if tool else None,
+            workspace=spec.policy_engine.workspace if spec.policy_engine else None,
+            restrict_to_workspace=(
+                spec.policy_engine.restrict_to_workspace if spec.policy_engine else False
+            ),
+            run_id=spec.run_id,
+            session_key=spec.session_key,
+        )
+        policy_decision: ToolPolicyDecision | None = None
+        if spec.policy_engine:
+            policy_decision = await spec.policy_engine.evaluate(policy_context)
+            if hook_denial:
+                policy_decision = ToolPolicyDecision(
+                    PolicyAction.DENY,
+                    hook_denial[0],
+                    ["hook.denied"],
+                    argument_hash=policy_decision.argument_hash,
+                )
+        elif hook_denial:
+            return await self._reject_tool(
+                spec, tool_call, hook_denial[0], hook_denial[1], hook_manager,
+                iteration, policy_context, None, started,
+            )
+
+        if policy_decision and policy_decision.action is PolicyAction.CONFIRM:
+            await self._audit_tool(
+                spec, hook_manager, iteration, policy_context, policy_decision,
+                stage="confirmation", outcome="pending", duration_ms=self._elapsed_ms(started),
+            )
+            approved = False
+            approval_error: str | None = None
+            if spec.confirmation_handler:
+                try:
+                    approved = bool(
+                        await spec.confirmation_handler(policy_context, policy_decision)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    approval_error = f"{type(exc).__name__}: {exc}"
+                    approved = False
+            policy_decision.confirmation = (
+                "approved" if approved else "error" if approval_error else "declined"
+            )
+            if not approved:
+                detail = (
+                    "tool confirmation failed because the approval handler errored"
+                    if approval_error
+                    else "tool confirmation was not approved"
+                )
+                return await self._reject_tool(
+                    spec, tool_call, detail, None,
+                    hook_manager, iteration, policy_context, policy_decision, started,
+                    approval_error=approval_error,
+                )
+
+        if policy_decision and policy_decision.action is PolicyAction.DENY:
+            return await self._reject_tool(
+                spec, tool_call, policy_decision.reason, hook_denial[1] if hook_denial else None,
+                hook_manager, iteration, policy_context, policy_decision, started,
+            )
+
         try:
             if (
                 isinstance(spec.tools, ToolRegistry)
@@ -541,12 +606,25 @@ class AgentRunner:
                 result = detailed.content
                 result_status = detailed.status
                 result_stage = detailed.stage
+                result_outcome = detailed.outcome
+                result_progress = detailed.progress
+                error_info = detailed.error_info
+                normalized_arguments = detailed.normalized_arguments
             else:
                 result = await spec.tools.execute(tool_call.name, tool_call.arguments)
                 result_status = (
                     "error" if isinstance(result, str) and result.startswith("Error") else "ok"
                 )
                 result_stage = "result" if result_status == "error" else None
+                result_outcome = (
+                    ToolOutcome.FAILED if result_status == "error" else ToolOutcome.SUCCESS
+                )
+                result_progress = None
+                normalized_arguments = tool_call.arguments
+                error_info = (
+                    ToolErrorClassifier.classify(result, stage=result_stage or "result")
+                    if result_status == "error" else None
+                )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -572,6 +650,14 @@ class AgentRunner:
                         state=spec.event_metadata,
                     )
                 )
+            error_info = ToolErrorClassifier.classify(exc, stage="execution")
+            if policy_decision:
+                audit_result = await self._audit_tool(
+                    spec, hook_manager, iteration, policy_context, policy_decision,
+                    stage="execution", outcome=ToolOutcome.FAILED.value,
+                    duration_ms=self._elapsed_ms(started), error=error_info_dict(error_info),
+                )
+                self._mark_audit_degraded(event, audit_result)
             if spec.fail_on_tool_error:
                 return f"Error: {type(exc).__name__}: {exc}", event, exc
             return f"Error: {type(exc).__name__}: {exc}", event, None
@@ -587,6 +673,10 @@ class AgentRunner:
             "status": result_status,
             "detail": detail,
         }
+        if result_outcome is ToolOutcome.PARTIAL:
+            event_data["outcome"] = ToolOutcome.PARTIAL.value
+            if result_progress:
+                event_data["progress"] = result_progress
         if hook_manager:
             event_type = (
                 LifecycleEventType.TOOL_ERROR
@@ -617,4 +707,112 @@ class AgentRunner:
             elif len(detail) > 120:
                 detail = detail[:120] + "..."
             event_data["detail"] = detail
+        if policy_decision:
+            audit_result = await self._audit_tool(
+                spec, hook_manager, iteration, policy_context, policy_decision,
+                stage=result_stage or "execution",
+                outcome=result_outcome.value,
+                duration_ms=self._elapsed_ms(started),
+                confirmation=policy_decision.confirmation,
+                progress=result_progress,
+                normalized_arguments=normalized_arguments,
+                error=error_info_dict(error_info),
+                result_summary=detail,
+            )
+            self._mark_audit_degraded(event_data, audit_result)
         return result, event_data, None
+
+    async def _reject_tool(
+        self,
+        spec: AgentRunSpec,
+        tool_call: ToolCallRequest,
+        detail: str,
+        response_content: str | None,
+        hook_manager: HookManager | None,
+        iteration: int | None,
+        context: ToolRequestContext,
+        decision: ToolPolicyDecision | None,
+        started: float,
+        approval_error: str | None = None,
+    ) -> tuple[Any, dict[str, Any], BaseException | None]:
+        result = response_content or f"Error: {detail}"
+        if hook_manager:
+            await hook_manager.dispatch(
+                LifecycleEvent(
+                    LifecycleEventType.TOOL_ERROR,
+                    payload={
+                        "tool_call": tool_call,
+                        "stage": "denied",
+                        "error": detail,
+                        "result": result,
+                    },
+                    phase="error",
+                    run_id=spec.run_id,
+                    session_key=spec.session_key,
+                    iteration=iteration,
+                    state=spec.event_metadata,
+                )
+            )
+        event_data = {"name": tool_call.name, "status": "error", "detail": detail}
+        if decision:
+            error_info = ToolErrorClassifier.classify(detail, stage="denied")
+            audit_result = await self._audit_tool(
+                spec, hook_manager, iteration, context, decision,
+                stage="denied", outcome=ToolOutcome.FAILED.value,
+                duration_ms=self._elapsed_ms(started),
+                confirmation=decision.confirmation,
+                approval_error=approval_error,
+                error=error_info_dict(error_info),
+                result_summary=result,
+            )
+            self._mark_audit_degraded(event_data, audit_result)
+        return result, event_data, None
+
+    async def _audit_tool(
+        self,
+        spec: AgentRunSpec,
+        hook_manager: HookManager | None,
+        iteration: int | None,
+        context: ToolRequestContext,
+        decision: ToolPolicyDecision,
+        **fields: Any,
+    ) -> ToolAuditWriteResult | None:
+        if not spec.policy_engine:
+            return None
+        record = spec.policy_engine.audit_record(context, decision, **fields)
+        write_result = await spec.policy_engine.audit.write(record)
+        if write_result is None:
+            # Compatibility for custom sinks implementing the previous protocol.
+            write_result = ToolAuditWriteResult(
+                True, spec.policy_engine.redactor.redact(record)
+            )
+        if hook_manager:
+            await hook_manager.dispatch(
+                LifecycleEvent(
+                    LifecycleEventType.TOOL_AUDIT,
+                    payload={
+                        "record": write_result.record,
+                        "write_succeeded": write_result.succeeded,
+                        "degraded": not write_result.succeeded,
+                        "error": write_result.error,
+                    },
+                    phase="after",
+                    run_id=spec.run_id,
+                    session_key=spec.session_key,
+                    iteration=iteration,
+                    state=spec.event_metadata,
+                )
+            )
+        return write_result
+
+    @staticmethod
+    def _mark_audit_degraded(
+        event_data: dict[str, Any], write_result: ToolAuditWriteResult | None
+    ) -> None:
+        if write_result is not None and not write_result.succeeded:
+            event_data["audit_status"] = "degraded"
+            event_data["audit_error"] = write_result.error
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return round((perf_counter() - started) * 1000, 3)

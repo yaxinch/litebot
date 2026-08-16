@@ -116,7 +116,7 @@ class Tool(ABC):
                 return val
 
         if target_type == "string":
-            return val if val is None else str(val)
+            return str(val) if isinstance(val, (int, float, bool)) else val
 
         if target_type == "boolean" and isinstance(val, str):
             val_lower = val.lower()
@@ -145,6 +145,14 @@ class Tool(ABC):
         return self._validate(params, {**schema, "type": "object"}, "")
 
     def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
+        if "oneOf" in schema:
+            shared = {key: value for key, value in schema.items() if key != "oneOf"}
+            matches = sum(
+                not self._validate(val, {**shared, **option}, path)
+                for option in schema["oneOf"]
+            )
+            if matches != 1:
+                return [f"{path or 'parameter'} should match exactly one allowed schema"]
         raw_type = schema.get("type")
         nullable = (isinstance(raw_type, list) and "null" in raw_type) or schema.get(
             "nullable", False
@@ -182,7 +190,13 @@ class Tool(ABC):
             for k, v in val.items():
                 if k in props:
                     errors.extend(self._validate(v, props[k], path + "." + k if path else k))
+                elif schema.get("additionalProperties") is False:
+                    errors.append(f"unexpected {path + '.' + k if path else k}")
         if t == "array" and "items" in schema:
+            if "minItems" in schema and len(val) < schema["minItems"]:
+                errors.append(f"{label} must contain at least {schema['minItems']} items")
+            if "maxItems" in schema and len(val) > schema["maxItems"]:
+                errors.append(f"{label} must contain at most {schema['maxItems']} items")
             for i, item in enumerate(val):
                 errors.extend(
                     self._validate(item, schema["items"], f"{path}[{i}]" if path else f"[{i}]")

@@ -33,6 +33,9 @@ python -m benchmarks ab-context --suite large-tool-result --repetitions 3
 python -m benchmarks episodic-memory --output benchmark_results/episodic-memory.json
 python -m benchmarks hooks
 python -m benchmarks hooks --case tool_run_order --repetitions 30
+python -m benchmarks tool-safety
+python -m benchmarks tool-safety --case duplicate_block
+python -m benchmarks.tool_safety
 ```
 
 `episodic-memory` is a fully offline deterministic benchmark for structured
@@ -45,6 +48,17 @@ legacy `AgentHook` compatibility, state isolation, allow/deny/modify control,
 and callback overhead. It uses scripted providers and fixed tools, never an
 LLM judge or network service. Results contain exact traces plus correctness
 rates and unexpected/missing/duplicate event counts.
+
+`tool-safety` is a fixed, fully offline runtime-governance regression suite.
+Its 13 cases cover ALLOW, explicit DENY, confirmation approval/rejection/error,
+duplicate blocking and expiry, argument canonicalization, workspace JSONL audit
+integrity/correlation and write degradation, invalid arguments, and explicit
+partial execution outcomes. It uses a scripted provider, counting fake tools,
+a fake approver, an injectable fake clock, and an injectable audit writer. Every
+case gets an isolated temporary workspace; network and subprocess entry points
+fail fast. Each result reports `case_name`, `task_success`, `audit_success`,
+`strict_success`, and `failure_reason`. The command exits successfully only when
+strict success is 100% for every selected case.
 
 `ab-context` is the strict live-provider paired benchmark. It runs the same
 `AgentLoop` in explicit `baseline` and `context_management` modes, records all
