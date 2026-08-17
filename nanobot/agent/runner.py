@@ -542,6 +542,8 @@ class AgentRunner:
             ),
             run_id=spec.run_id,
             session_key=spec.session_key,
+            case_id=(str(spec.event_metadata.get("case_id")) if spec.event_metadata.get("case_id") else None),
+            attempt=int(spec.event_metadata.get("attempt", 1) or 1),
         )
         policy_decision: ToolPolicyDecision | None = None
         if spec.policy_engine:

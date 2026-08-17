@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "litebot-eval-case/v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "case_id",
+    "category",
+    "profile",
+    "description",
+    "turns",
+    "verifiers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "litebot-eval-case/v2"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+    },
+    "category": {
+      "enum": [
+        "context_management",
+        "memory_retrieval",
+        "tool_safety",
+        "tool_reliability",
+        "multi_step_reasoning",
+        "regression"
+      ]
+    },
+    "profile": {
+      "enum": [
+        "core",
+        "integration",
+        "live",
+        "judge"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turns": {
+      "type": "array",
+      "minItems": 1
+    },
+    "verifiers": {
+      "type": "array",
+      "minItems": 1
+    }
+  }
+}

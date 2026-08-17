@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "litebot-comparison-report/v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "metadata",
+    "baseline",
+    "current",
+    "compatibility",
+    "overall",
+    "failure_distribution",
+    "categories",
+    "case_changes",
+    "gate"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "litebot-comparison-report/v2"
+    },
+    "gate": {
+      "type": "object",
+      "required": [
+        "passed",
+        "hard_failures",
+        "warnings"
+      ]
+    }
+  }
+}

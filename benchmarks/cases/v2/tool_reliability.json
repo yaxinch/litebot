@@ -1,0 +1,386 @@
+[
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.error_result",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic error result regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_tool_error_result_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.error_result."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.error_result"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.exception",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic exception regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_tool_exception_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.exception."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.exception"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.timeout",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic timeout regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "timeout"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.timeout."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.timeout"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.retryable",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic retryable regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "retryable"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.retryable."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.retryable"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.non_retryable",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic non retryable regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "non_retryable"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.non_retryable."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.non_retryable"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.rate_limit",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic rate limit regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "rate_limit"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.rate_limit."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.rate_limit"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.invalid_request",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic invalid request regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_tool_invalid_parameters_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.invalid_request."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.invalid_request"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.partial_result",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic partial result regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "partial_result"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.partial_result."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.partial_result"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.fallback",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic fallback regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_tool_error_result_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.fallback."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.fallback"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.retry_exhaustion",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic retry exhaustion regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_repeated_failure_until_limit"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.retry_exhaustion."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.retry_exhaustion"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.parallel_partial_failure",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic parallel partial failure regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "parallel_partial_failure"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.parallel_partial_failure."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.parallel_partial_failure"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "tool_reliability.mcp_failure",
+    "category": "tool_reliability",
+    "profile": "core",
+    "description": "Deterministic mcp failure regression contract.",
+    "tags": [
+      "tool_reliability",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "mcp_failure"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract tool_reliability.mcp_failure."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:tool_reliability.mcp_failure"
+      }
+    ]
+  }
+]

@@ -1,0 +1,386 @@
+[
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.session_reload",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic session reload regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_history_after_reload"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.session_reload."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.session_reload"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.tool_result_persistence",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic tool result persistence regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_history_tool_result"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.tool_result_persistence."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.tool_result_persistence"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.repeated_failure_stop",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic repeated failure stop regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_repeated_failure_until_limit"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.repeated_failure_stop."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.repeated_failure_stop"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.retrieval_guard",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic retrieval guard regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "retrieval_guard"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.retrieval_guard."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.retrieval_guard"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.artifact_session_isolation",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic artifact session isolation regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "artifact_session_isolation"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.artifact_session_isolation."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.artifact_session_isolation"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.hook_ordering",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic hook ordering regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "hook_ordering"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.hook_ordering."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.hook_ordering"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.audit_integrity",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic audit integrity regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "audit_integrity"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.audit_integrity."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.audit_integrity"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.policy_fail_closed",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic policy fail closed regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "policy_fail_closed"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.policy_fail_closed."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.policy_fail_closed"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.token_accounting",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic token accounting regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "token_accounting"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.token_accounting."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.token_accounting"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.case_isolation",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic case isolation regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "case_isolation"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.case_isolation."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.case_isolation"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.deterministic_repeatability",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic deterministic repeatability regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "deterministic_repeatability"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.deterministic_repeatability."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.deterministic_repeatability"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "regression.legacy_cli",
+    "category": "regression",
+    "profile": "core",
+    "description": "Deterministic legacy cli regression contract.",
+    "tags": [
+      "regression",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "legacy_cli"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract regression.legacy_cli."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:regression.legacy_cli"
+      }
+    ]
+  }
+]

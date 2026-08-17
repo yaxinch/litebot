@@ -1,6 +1,6 @@
 import sys
 
-from benchmarks.run import main as standard_main
+from benchmarks.framework.cli import main as framework_main
 
 
 def main() -> int:
@@ -20,7 +20,7 @@ def main() -> int:
         from benchmarks.tool_safety import main as tool_safety_main
 
         return tool_safety_main(sys.argv[2:])
-    return standard_main()
+    return framework_main()
 
 
 if __name__ == "__main__":

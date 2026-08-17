@@ -1,0 +1,386 @@
+[
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.exact_recall",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic exact recall regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "exact_constraint"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.exact_recall."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.exact_recall"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.cjk_recall",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic cjk recall regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "cjk_constraint"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.cjk_recall."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.cjk_recall"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.cross_session",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic cross session regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "cross_session"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.cross_session."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.cross_session"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.recency",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic recency regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "recency_importance"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.recency."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.recency"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.importance",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic importance regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "importance"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.importance."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.importance"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.conflict_update",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic conflict update regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "conflict_update"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.conflict_update."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.conflict_update"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.duplicate_suppression",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic duplicate suppression regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "duplicate_suppression"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.duplicate_suppression."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.duplicate_suppression"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.zero_match",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic zero match regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "zero_match"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.zero_match."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.zero_match"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.legacy_migration",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic legacy migration regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "legacy_migration"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.legacy_migration."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.legacy_migration"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.char_budget",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic char budget regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "char_budget"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.char_budget."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.char_budget"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.session_isolation",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic session isolation regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "session_isolation"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.session_isolation."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.session_isolation"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "memory_retrieval.end_to_end_injection",
+    "category": "memory_retrieval",
+    "profile": "core",
+    "description": "Deterministic end to end injection regression contract.",
+    "tags": [
+      "memory_retrieval",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "memory_case": "agent_memory_recall"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract memory_retrieval.end_to_end_injection."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:memory_retrieval.end_to_end_injection"
+      }
+    ]
+  }
+]

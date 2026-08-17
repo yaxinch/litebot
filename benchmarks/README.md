@@ -1,4 +1,31 @@
-# LiteBot baseline benchmark
+# LiteBot evaluation and regression framework
+
+The v2 framework is the default entry point. It provides 72 fixed, offline core
+cases (12 for each of context management, memory retrieval, tool safety, tool
+reliability, multi-step reasoning, and regression), deterministic verifiers,
+normalized metrics, named baselines, and JSON/Markdown comparison reports.
+
+```powershell
+python -m benchmarks validate
+python -m benchmarks list --category tool_safety
+python -m benchmarks run --profile core
+python -m benchmarks run --case tool_safety.explicit_deny
+python -m benchmarks baseline promote --run benchmarks/results/<run-id> --profile core --name phase4
+python -m benchmarks baseline set-default --profile core --name phase4
+python -m benchmarks compare --baseline core/default --current benchmarks/results/<run-id>
+python -m benchmarks audit show --run benchmarks/results/<run-id> --case tool_safety.explicit_deny
+```
+
+Core cases do not use a real provider, network service, subprocess, or LLM
+judge. `live` and `judge` profiles require explicit opt-in. A comparison fails
+on correctness, coverage, audit, or manifest regressions. Latency, tokens, and
+tool-round changes are warnings unless `--strict-performance` is supplied.
+
+Every v2 result uses `litebot-eval-result/v2`; tool audit records use
+`litebot-tool-audit/v2` and include a redacted, hash-chained event trace from
+request through final status.
+
+## Legacy benchmark commands
 
 This directory is a benchmark harness, not a pytest suite. It exercises the
 nanobot v0.1.4.post6 agent abstractions and writes versioned JSONL results for
@@ -20,12 +47,6 @@ sessions, memory, and the repository workspace are not used as case workspaces.
 ## Commands
 
 ```powershell
-python -m benchmarks
-python -m benchmarks run --suite deterministic
-python -m benchmarks run --suite integration
-python -m benchmarks run --suite live --allow-live
-python -m benchmarks run --suite live --allow-live --case live_web_search
-python -m benchmarks compare --baseline benchmark_results/<baseline> --candidate benchmark_results/<candidate>
 python -m benchmarks.live_context --output benchmark_results/live-context.json
 python -m benchmarks.context_management --output benchmark_results/context-management.json
 python -m benchmarks ab-context --suite long-context --repetitions 3

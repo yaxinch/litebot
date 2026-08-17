@@ -8,13 +8,14 @@ import json
 import os
 import re
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePath
 from typing import Any, Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -51,6 +52,8 @@ class ToolRequestContext:
     restrict_to_workspace: bool = False
     run_id: str | None = None
     session_key: str | None = None
+    case_id: str | None = None
+    attempt: int = 1
 
 
 @dataclass(slots=True)
@@ -121,13 +124,21 @@ class SensitiveDataRedactor:
         redacted = value
         try:
             parsed = urlsplit(redacted)
-            if parsed.scheme and parsed.hostname and parsed.password is not None:
+            if parsed.scheme and parsed.hostname:
                 host = parsed.hostname
                 if parsed.port:
                     host += f":{parsed.port}"
                 user = parsed.username or ""
+                credentials = (
+                    f"{user}:{self.replacement}@" if parsed.password is not None else
+                    f"{user}@" if parsed.username is not None else ""
+                )
+                query = urlencode([
+                    (key, self.replacement if self._normalize_key(key) in self.keys else item)
+                    for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+                ])
                 redacted = urlunsplit(
-                    (parsed.scheme, f"{user}:{self.replacement}@{host}", parsed.path, parsed.query, parsed.fragment)
+                    (parsed.scheme, f"{credentials}{host}", parsed.path, query, parsed.fragment)
                 )
         except ValueError:
             pass
@@ -413,18 +424,103 @@ class ToolPolicyEngine:
         decision: ToolPolicyDecision,
         **fields: Any,
     ) -> dict[str, Any]:
+        clean_arguments = self.redactor.redact(context.arguments)
+        clean_fields = self.redactor.redact(fields)
+        trace_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"litebot:{context.run_id}:{context.session_key}:{context.tool_call_id}",
+        ))
+        timestamp = datetime.now(UTC).isoformat()
+        attempt = max(1, int(context.attempt))
+        events: list[dict[str, Any]] = []
+
+        def add(stage: str, data: dict[str, Any]) -> None:
+            sequence = len(events) + 1
+            event = {
+                "schema_version": "litebot-tool-audit/v2",
+                "event_id": str(uuid.uuid4()),
+                "trace_id": trace_id,
+                "run_id": context.run_id,
+                "session_key": context.session_key,
+                "case_id": context.case_id,
+                "tool_call_id": context.tool_call_id,
+                "attempt": attempt,
+                "sequence": sequence,
+                "timestamp": timestamp,
+                "stage": stage,
+                "tool": context.name,
+                "data": self.redactor.redact(data),
+                "previous_event_hash": events[-1]["event_hash"] if events else None,
+                "redaction": {
+                    "applied": True,
+                    "version": "v2",
+                    "replacement": self.redactor.replacement,
+                },
+            }
+            canonical = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+            event["event_hash"] = hashlib.sha256(canonical.encode()).hexdigest()
+            events.append(event)
+
+        add("request", {"tool_call_id": context.tool_call_id, "tool": context.name})
+        add("policy_decision", {
+            "action": decision.action.value,
+            "reason": decision.reason,
+            "reason_codes": decision.reason_codes,
+            "rule_ids": decision.rule_ids,
+            "confirmation": decision.confirmation,
+        })
+        add("arguments", {
+            "arguments": clean_arguments,
+            "argument_hash": decision.argument_hash,
+            "normalized_arguments": fields.get("normalized_arguments"),
+        })
+        outcome = str(fields.get("outcome", ""))
+        stage = str(fields.get("stage", ""))
+        if outcome != "pending":
+            denied = decision.action is PolicyAction.DENY or stage == "denied"
+            declined = decision.confirmation in {"declined", "error"}
+            if not denied and not declined:
+                add("execution_start", {"stage": stage or "execution"})
+                add("execution_result", {
+                    "outcome": outcome or "success",
+                    "result_summary": fields.get("result_summary"),
+                    "progress": fields.get("progress"),
+                    "error": fields.get("error"),
+                    "duration_ms": fields.get("duration_ms"),
+                })
+            if fields.get("retry_scheduled"):
+                add("retry_scheduled", {
+                    "previous_attempt": attempt,
+                    "reason": fields.get("retry_reason"),
+                    "retry_class": fields.get("retry_class"),
+                    "backoff_ms": fields.get("backoff_ms"),
+                })
+            final_status = (
+                "denied" if denied else
+                "declined" if declined else
+                "partial" if outcome == "partial" else
+                "success" if outcome == "success" else
+                "exhausted" if outcome == "exhausted" else
+                "failed"
+            )
+            add("final_status", {"status": final_status, "audit_degraded": False})
+
         return {
+            "schema_version": "litebot-tool-audit/v2",
+            "trace_id": trace_id,
             "run_id": context.run_id,
             "session_key": context.session_key,
+            "case_id": context.case_id,
             "tool_call_id": context.tool_call_id,
             "tool": context.name,
-            "arguments": self.redactor.redact(context.arguments),
+            "arguments": clean_arguments,
             "argument_hash": decision.argument_hash,
             "policy_action": decision.action.value,
             "policy_reason": decision.reason,
             "reason_codes": decision.reason_codes,
             "rule_ids": decision.rule_ids,
-            **fields,
+            "tool_trace": events,
+            **clean_fields,
         }
 
 

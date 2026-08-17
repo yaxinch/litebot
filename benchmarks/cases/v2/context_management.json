@@ -1,0 +1,386 @@
+[
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.long_context_recall",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic long context recall regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_long_context_direct_recall"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.long_context_recall."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.long_context_recall"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.tail_instruction",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic tail instruction regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_long_context_tail_instruction"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.tail_instruction."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.tail_instruction"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.tool_call_boundary",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic tool call boundary regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_long_context_history_boundary"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.tool_call_boundary."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.tool_call_boundary"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.compaction_trigger",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic compaction trigger regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_long_context_consolidation"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.compaction_trigger."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.compaction_trigger"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.compaction_denied",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic compaction denied regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "compaction_denied"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.compaction_denied."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.compaction_denied"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.hard_truncate",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic hard truncate regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "hard_truncate"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.hard_truncate."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.hard_truncate"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.artifact_offload",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic artifact offload regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "artifact_offload"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.artifact_offload."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.artifact_offload"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.artifact_page_recovery",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic artifact page recovery regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "artifact_page_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.artifact_page_recovery."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.artifact_page_recovery"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.retrieval_history_compaction",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic retrieval history compaction regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "retrieval_history_compaction"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.retrieval_history_compaction."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.retrieval_history_compaction"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.summary_cross_turn",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic summary cross turn regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "summary_cross_turn"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.summary_cross_turn."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.summary_cross_turn"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.token_budget",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic token budget regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "token_budget"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.token_budget."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.token_budget"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "context_management.overflow",
+    "category": "context_management",
+    "profile": "core",
+    "description": "Deterministic overflow regression contract.",
+    "tags": [
+      "context_management",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "overflow"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract context_management.overflow."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:context_management.overflow"
+      }
+    ]
+  }
+]

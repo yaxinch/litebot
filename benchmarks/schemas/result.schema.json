@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "litebot-eval-result/v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "case_id",
+    "category",
+    "passed",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "latency",
+    "tool_rounds",
+    "tool_calls",
+    "tool_trace",
+    "context_compressions",
+    "memory_hits",
+    "tool_denied",
+    "retry_count",
+    "failure_category",
+    "verifier_reason"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "litebot-eval-result/v2"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "latency": {
+      "type": "number",
+      "minimum": 0
+    },
+    "tool_trace": {
+      "type": "array"
+    }
+  }
+}

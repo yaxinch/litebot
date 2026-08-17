@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "litebot-tool-audit/v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trace_id",
+    "run_id",
+    "tool_call_id",
+    "tool",
+    "tool_trace"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "litebot-tool-audit/v2"
+    },
+    "tool_trace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "trace_id",
+          "sequence",
+          "stage",
+          "data",
+          "event_hash"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "request",
+              "policy_decision",
+              "arguments",
+              "execution_start",
+              "execution_result",
+              "retry_scheduled",
+              "final_status"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

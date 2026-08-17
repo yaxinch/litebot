@@ -1,0 +1,386 @@
+[
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.sequential_tools",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic sequential tools regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_multi_tool_sequential"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.sequential_tools."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.sequential_tools"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.parallel_tools",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic parallel tools regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_multi_tool_parallel"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.parallel_tools."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.parallel_tools"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.three_result_synthesis",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic three result synthesis regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_multi_tool_result_synthesis"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.three_result_synthesis."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.three_result_synthesis"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.filesystem_chain",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic filesystem chain regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "int_real_filesystem_chain"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.filesystem_chain."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.filesystem_chain"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.shell_chain",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic shell chain regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "int_real_shell_chain"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.shell_chain."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.shell_chain"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.mcp_chain",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic mcp chain regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "int_local_mcp_roundtrip"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.mcp_chain."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.mcp_chain"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.subagent_chain",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic subagent chain regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "int_subagent_roundtrip"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.subagent_chain."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.subagent_chain"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.memory_and_tool",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic memory and tool regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "memory_and_tool"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.memory_and_tool."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.memory_and_tool"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.context_and_retrieval",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic context and retrieval regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "context_and_retrieval"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.context_and_retrieval."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.context_and_retrieval"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.failure_reroute",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic failure reroute regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_tool_error_result_recovery"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.failure_reroute."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.failure_reroute"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.dependent_arguments",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic dependent arguments regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "probe": "dependent_arguments"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.dependent_arguments."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.dependent_arguments"
+      }
+    ]
+  },
+  {
+    "schema_version": "litebot-eval-case/v2",
+    "case_id": "multi_step_reasoning.convergence_stop",
+    "category": "multi_step_reasoning",
+    "profile": "core",
+    "description": "Deterministic convergence stop regression contract.",
+    "tags": [
+      "multi_step_reasoning",
+      "deterministic"
+    ],
+    "requirements": [],
+    "fixture": {
+      "legacy_case": "det_multi_round_tool_chain"
+    },
+    "turns": [
+      {
+        "role": "user",
+        "content": "Run deterministic contract multi_step_reasoning.convergence_stop."
+      }
+    ],
+    "limits": {
+      "timeout_seconds": 20,
+      "max_iterations": 8,
+      "max_tool_rounds": 8
+    },
+    "verifiers": [
+      {
+        "type": "exact_match",
+        "expected": "PASS:multi_step_reasoning.convergence_stop"
+      }
+    ]
+  }
+]
